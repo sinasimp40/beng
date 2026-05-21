@@ -1,0 +1,25 @@
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development node_modules/.bin/tsx server/index.ts
+
+[1G[0K[Security] All security middleware initialized
+[Startup] Initializing server...
+[Startup] Loading settings from database...
+[Startup] Initializing encryption...
+[Startup] Registering routes...
+Started automatic order status polling (every 30 seconds)
+3:50:28 AM [express] serving on port 5000
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+reCAPTCHA secret not configured, skipping verification
+3:50:37 AM [express] POST /api/auth/login 401 in 4ms
+reCAPTCHA secret not configured, skipping verification
+3:50:38 AM [express] POST /api/auth/register 201 in 82ms
+reCAPTCHA secret not configured, skipping verification
+3:50:38 AM [express] POST /api/auth/register 200 in 2ms
+3:50:38 AM [express] POST /api/auth/login 400 in 1ms
+3:50:45 AM [express] GET /api/settings/recaptcha 304 in 5ms
+3:50:45 AM [express] GET /api/products 304 in 3ms
+3:50:45 AM [express] GET /api/settings/social 304 in 3ms
+3:50:45 AM [express] GET /api/settings/shop 304 in 19ms
+3:50:45 AM [express] GET /api/settings/theme 304 in 15ms
