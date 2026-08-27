@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { MessageCircle, Save, Loader2, Plus, Trash2, Link2, ExternalLink, GripVertical } from "lucide-react";
-import { SiTelegram, SiInstagram, SiX, SiDiscord, SiYoutube, SiWhatsapp, SiFacebook, SiTiktok, SiLinkedin, SiReddit, SiTwitch, SiSnapchat, SiPinterest, SiGithub } from "react-icons/si";
+import { SiTelegram, SiInstagram, SiX, SiDiscord, SiYoutube, SiWhatsapp, SiFacebook, SiTiktok, SiReddit, SiTwitch, SiSnapchat, SiPinterest, SiGithub } from "react-icons/si";
+import { FaLinkedin } from "react-icons/fa";
 
 interface SocialLink {
   id: string;
@@ -33,7 +34,7 @@ const iconOptions = [
   { value: "whatsapp", label: "WhatsApp", icon: SiWhatsapp, color: "#25D366" },
   { value: "facebook", label: "Facebook", icon: SiFacebook, color: "#1877F2" },
   { value: "tiktok", label: "TikTok", icon: SiTiktok, color: "#000000" },
-  { value: "linkedin", label: "LinkedIn", icon: SiLinkedin, color: "#0077B5" },
+  { value: "linkedin", label: "LinkedIn", icon: FaLinkedin, color: "#0077B5" },
   { value: "reddit", label: "Reddit", icon: SiReddit, color: "#FF4500" },
   { value: "twitch", label: "Twitch", icon: SiTwitch, color: "#9146FF" },
   { value: "snapchat", label: "Snapchat", icon: SiSnapchat, color: "#FFFC00" },

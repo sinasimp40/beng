@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, X, ExternalLink, Link2, ChevronRight } from "lucide-react";
-import { SiTelegram, SiInstagram, SiX, SiDiscord, SiYoutube, SiWhatsapp, SiFacebook, SiTiktok, SiLinkedin, SiReddit, SiTwitch, SiSnapchat, SiPinterest, SiGithub } from "react-icons/si";
+import { SiTelegram, SiInstagram, SiX, SiDiscord, SiYoutube, SiWhatsapp, SiFacebook, SiTiktok, SiReddit, SiTwitch, SiSnapchat, SiPinterest, SiGithub } from "react-icons/si";
+import { FaLinkedin } from "react-icons/fa";
 
 interface SocialLink {
   id: string;
@@ -38,7 +39,7 @@ const getIcon = (iconType: string) => {
     case "tiktok":
       return SiTiktok;
     case "linkedin":
-      return SiLinkedin;
+      return FaLinkedin;
     case "reddit":
       return SiReddit;
     case "twitch":
@@ -116,7 +117,7 @@ const getWidgetButtonIcon = (iconType: string) => {
     case "tiktok":
       return SiTiktok;
     case "linkedin":
-      return SiLinkedin;
+      return FaLinkedin;
     case "reddit":
       return SiReddit;
     case "twitch":

@@ -4,6 +4,14 @@
 
 This is a digital e-commerce platform for selling gift cards, rewards points, and premium digital products. The application features a dark, cyberpunk-inspired aesthetic with cryptocurrency payment integration. It includes both a customer-facing storefront and an admin panel for product management. The shop name, logo, and branding are fully customizable through the admin panel.
 
+## Running on Replit
+
+- Use the **Start application** workflow, which runs `npm run dev`.
+- The Express and Vite application listens on `0.0.0.0:5000`.
+- Apply development database schema changes with `npm run db:push`.
+- Validate the project with `npm run check` and `npm run build`.
+- Payment gateway, SMTP, reCAPTCHA, and Telegram settings are optional for local startup and can be configured through the admin panel.
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.

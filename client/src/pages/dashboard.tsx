@@ -164,7 +164,7 @@ export default function Dashboard() {
     });
   }, [orders, searchQuery, statusFilter]);
 
-  const [checkingStock, setCheckingStock] = useState<number | null>(null);
+  const [checkingStock, setCheckingStock] = useState<string | null>(null);
 
   const handleOrderClick = async (order: Order) => {
     const noPayStatuses = ["expired", "refunded"];
