@@ -1,11 +1,13 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { createHash } from "node:crypto";
 import { InsufficientStockError, storage } from "./storage";
-import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema } from "@shared/schema";
+import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema, type CreditTransaction } from "@shared/schema";
 import { z } from "zod";
 import { nowPaymentsService } from "./nowpayments";
 import { emailService } from "./email";
+import { creditStorage, CreditOperationError, InsufficientCreditError } from "./creditStorage";
 import { verifyRecaptcha, hashPassword, verifyPassword, generateSessionToken, needsRehash } from "./auth";
 import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptToken, scheduleAutoBackup, initializeEncryption } from "./services/databaseBackupService";
 import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification } from "./services/telegramService";
@@ -124,6 +126,7 @@ const sessions = new Map<string, { userId: string; email: string; role: string; 
 const userSessions = new Map<string, Set<string>>();
 // WebSocket connections for session invalidation notifications (token -> WebSocket)
 const sessionSubscribers = new Map<string, WebSocket>();
+const creditSubscribers = new Map<WebSocket, { userId: string; role: string }>();
 
 // Active admin WebSocket connections bound to their session token, so we can
 // force-close privileged streams when the session is revoked/expired.
@@ -195,6 +198,103 @@ const checkoutItemsSchema = z.array(z.object({
   productId: z.string().min(1).max(200),
   quantity: z.coerce.number().int().min(1).max(100),
 })).min(1).max(50);
+
+function getRequestSession(req: Request) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return undefined;
+  const token = authHeader.substring(7);
+  const session = sessions.get(token);
+  if (!session || session.expiresAt < new Date()) {
+    sessions.delete(token);
+    return undefined;
+  }
+  return { token, session };
+}
+
+function broadcastCreditUpdate(transaction: CreditTransaction) {
+  creditSubscribers.forEach((subscriber, ws) => {
+    if (
+      ws.readyState === WebSocket.OPEN &&
+      (subscriber.role === "admin" || subscriber.userId === transaction.userId)
+    ) {
+      ws.send(JSON.stringify({
+        type: "credit_updated",
+        transaction: subscriber.role === "admin"
+          ? transaction
+          : toCustomerCreditTransaction(transaction),
+      }));
+    }
+  });
+}
+
+function toCustomerCreditTransaction(transaction: CreditTransaction) {
+  return {
+    id: transaction.id,
+    userId: transaction.userId,
+    userEmail: transaction.userEmail,
+    type: transaction.type,
+    amountCents: transaction.amountCents,
+    balanceAfterCents: transaction.balanceAfterCents,
+    status: transaction.status,
+    notificationStatus: transaction.notificationStatus,
+    orderId: transaction.orderId,
+    topupId: transaction.topupId,
+    reason: transaction.reason,
+    createdAt: transaction.createdAt,
+    notifiedAt: transaction.notifiedAt,
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function processCreditNotifications(): Promise<void> {
+  const claimed = await creditStorage.claimPendingNotifications();
+  for (const transaction of claimed) {
+    try {
+      const signedAmount = `${transaction.amountCents >= 0 ? "+" : "-"}$${(Math.abs(transaction.amountCents) / 100).toFixed(2)}`;
+      const result = await emailService.sendEmail({
+        to: transaction.userEmail,
+        subject: `Account credit update: ${signedAmount}`,
+        html: `<div style="font-family:Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px">
+          <h1 style="font-size:22px">Account credit updated</h1>
+          <p>Your account credit changed by <strong>${signedAmount}</strong>.</p>
+          <p>New balance: <strong>$${(transaction.balanceAfterCents / 100).toFixed(2)}</strong></p>
+          <p>Type: ${escapeHtml(transaction.type.replaceAll("_", " "))}</p>
+          ${transaction.reason ? `<p>Reason: ${escapeHtml(transaction.reason)}</p>` : ""}
+          ${transaction.orderId ? `<p>Order: ${escapeHtml(transaction.orderId)}</p>` : ""}
+        </div>`,
+        messageId: `<credit-${createHash("sha256").update(transaction.id).digest("hex").slice(0, 32)}@account-credit.local>`,
+      });
+      if (!transaction.notificationLeaseId) {
+        throw new Error("Credit notification claim has no ownership token");
+      }
+      if (result.success) {
+        await creditStorage.completeNotification(transaction.id, transaction.notificationLeaseId);
+      } else {
+        await creditStorage.failNotification(
+          transaction.id,
+          transaction.notificationLeaseId,
+          result.error || "Email delivery failed",
+        );
+      }
+    } catch (error: any) {
+      if (transaction.notificationLeaseId) {
+        await creditStorage.failNotification(
+          transaction.id,
+          transaction.notificationLeaseId,
+          error?.message || "Email delivery failed",
+        );
+      }
+    }
+  }
+}
 
 async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined> {
   if (processingOrders.has(orderId)) {
@@ -279,6 +379,7 @@ let orderPollingInterval: NodeJS.Timeout | null = null;
 
 async function pollPendingOrders() {
   try {
+    await processCreditNotifications();
     const allOrders = await storage.getAllOrders();
     const fulfillmentRetries = allOrders.filter(order =>
       (order.status === "fulfilling" || order.status === "fulfillment_failed") &&
@@ -294,6 +395,25 @@ async function pollPendingOrders() {
 
     if (!nowPaymentsService.isConfigured()) {
       return;
+    }
+
+    const pendingTopups = await creditStorage.getPendingTopups();
+    for (const topup of pendingTopups) {
+      try {
+        const status = await nowPaymentsService.getPaymentStatus(topup.paymentId!);
+        const result = await creditStorage.applyTopupGatewayStatus(topup.id, {
+          paymentId: status.payment_id.toString(),
+          status: status.payment_status,
+          priceAmount: status.price_amount,
+          priceCurrency: status.price_currency,
+          payCurrency: status.pay_currency,
+        });
+        if (result.transaction) {
+          broadcastCreditUpdate(result.transaction);
+        }
+      } catch (error) {
+        console.error(`Credit top-up polling failed for ${topup.id}:`, error);
+      }
     }
 
     const pendingOrders = allOrders.filter(o => 
@@ -504,6 +624,7 @@ export async function registerRoutes(
         email: user.email,
         role: user.role,
         banned: user.banned,
+        creditBalanceCents: user.creditBalanceCents,
         createdAt: user.createdAt,
       };
 
@@ -577,6 +698,7 @@ export async function registerRoutes(
         email: user.email,
         role: user.role,
         banned: user.banned,
+        creditBalanceCents: user.creditBalanceCents,
         createdAt: user.createdAt,
       };
 
@@ -648,6 +770,7 @@ export async function registerRoutes(
         email: user.email,
         role: user.role,
         banned: user.banned,
+        creditBalanceCents: user.creditBalanceCents,
         createdAt: user.createdAt,
       };
 
@@ -1424,6 +1547,7 @@ export async function registerRoutes(
         email: u.email,
         role: u.role,
         banned: u.banned,
+        creditBalanceCents: u.creditBalanceCents,
         createdAt: u.createdAt,
       }));
       res.json(safeUsers);
@@ -1493,6 +1617,7 @@ export async function registerRoutes(
         email: updatedUser.email,
         role: updatedUser.role,
         banned: updatedUser.banned,
+        creditBalanceCents: updatedUser.creditBalanceCents,
         createdAt: updatedUser.createdAt,
       };
 
@@ -1526,19 +1651,14 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Cannot delete your own account" });
       }
 
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
-      }
-
-      const deletedOrdersCount = await storage.deleteOrdersByEmail(user.email);
-
+      const deletedOrdersCount = await creditStorage.deleteUserIfNoCreditRisk(userId);
       invalidateUserSessions(userId);
-
-      await storage.deleteUser(userId);
 
       res.json({ success: true, deletedOrders: deletedOrdersCount });
     } catch (error) {
+      if (error instanceof CreditOperationError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
       console.error("Error deleting user:", error);
       res.status(500).json({ error: "Failed to delete user" });
     }
@@ -1633,12 +1753,15 @@ export async function registerRoutes(
 
   app.delete("/api/orders/:id", requireAdmin, async (req, res) => {
     try {
-      const deleted = await storage.deleteOrder(req.params.id);
+      const deleted = await creditStorage.deleteOrderIfNoCreditActivity(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Order not found" });
       }
       res.json({ success: true });
     } catch (error) {
+      if (error instanceof CreditOperationError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
       console.error("Error deleting order:", error);
       res.status(500).json({ error: "Failed to delete order" });
     }
@@ -1944,13 +2067,213 @@ export async function registerRoutes(
     }
   });
 
-  // Create payment
-  app.post("/api/payments/create", paymentLimiter, async (req, res) => {
+  app.get("/api/credit/activity", async (req, res) => {
+    const auth = getRequestSession(req);
+    if (!auth) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const activity = await creditStorage.getUserActivity(auth.session.userId);
+      res.json(activity.map(toCustomerCreditTransaction));
+    } catch (error) {
+      console.error("Error fetching credit activity:", error);
+      res.status(500).json({ error: "Failed to fetch credit activity" });
+    }
+  });
+
+  app.post("/api/credit/topups", paymentLimiter, async (req, res) => {
+    const auth = getRequestSession(req);
+    if (!auth) return res.status(401).json({ error: "Not authenticated" });
     try {
       if (!nowPaymentsService.isConfigured()) {
         return res.status(400).json({ error: "Payment gateway not configured" });
       }
+      const input = z.object({
+        amountCents: z.coerce.number().int().min(100).max(1_000_000),
+        payCurrency: z.string().min(1).max(20),
+      }).parse(req.body);
+      const idempotencyKey = z.string().min(16).max(200)
+        .parse(req.headers["x-idempotency-key"]);
+      const user = await storage.getUser(auth.session.userId);
+      if (!user || user.banned === 1) {
+        return res.status(403).json({ error: "Account is not eligible for top-ups" });
+      }
+      const creation = await creditStorage.createTopup({
+        userId: user.id,
+        userEmail: user.email,
+        amountCents: input.amountCents,
+        payCurrency: input.payCurrency.toLowerCase(),
+        idempotencyKey,
+      });
+      const topup = creation.topup;
+      if (creation.replayed) {
+        return res.json({
+          topup,
+          payment: topup.paymentId ? {
+            payment_id: topup.paymentId,
+            payment_status: topup.gatewayStatus || topup.status,
+            pay_address: topup.payAddress,
+            pay_amount: topup.payAmount,
+            pay_currency: topup.payCurrency,
+            price_amount: topup.amountCents / 100,
+            price_currency: "usd",
+            order_id: `CREDIT-${topup.id}`,
+          } : null,
+        });
+      }
+      const domain = process.env.REPLIT_DOMAINS || process.env.REPLIT_DEV_DOMAIN;
+      const ipnCallbackUrl = domain ? `https://${domain}/api/payments/ipn` : undefined;
+      try {
+        const payment = await nowPaymentsService.createPayment({
+          price_amount: input.amountCents / 100,
+          price_currency: "usd",
+          pay_currency: input.payCurrency.toLowerCase(),
+          order_id: `CREDIT-${topup.id}`,
+          order_description: "Account credit top-up",
+          ipn_callback_url: ipnCallbackUrl,
+        });
+        const attached = await creditStorage.attachTopupPayment(topup.id, {
+          paymentId: payment.payment_id.toString(),
+          payAddress: payment.pay_address,
+          payAmount: payment.pay_amount,
+          gatewayStatus: payment.payment_status,
+        });
+        if (!attached) throw new Error("Top-up payment could not be attached");
+        return res.status(201).json({
+          topup: attached,
+          payment: { ...payment, price_amount: input.amountCents / 100 },
+        });
+      } catch (error: any) {
+        await creditStorage.failTopupCreation(topup.id, error?.message || "Payment creation failed");
+        throw error;
+      }
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors[0]?.message || "Invalid top-up" });
+      }
+      console.error("Error creating credit top-up:", error);
+      res.status(500).json({ error: error?.message || "Failed to create credit top-up" });
+    }
+  });
 
+  app.get("/api/credit/topups/:id", async (req, res) => {
+    const auth = getRequestSession(req);
+    if (!auth) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      let topup = await creditStorage.getTopup(req.params.id);
+      if (!topup || topup.userId !== auth.session.userId) {
+        return res.status(404).json({ error: "Top-up not found" });
+      }
+      if (topup.status === "pending" && topup.paymentId && nowPaymentsService.isConfigured()) {
+        try {
+          const payment = await nowPaymentsService.getPaymentStatus(topup.paymentId);
+          const result = await creditStorage.applyTopupGatewayStatus(topup.id, {
+            paymentId: payment.payment_id.toString(),
+            status: payment.payment_status,
+            priceAmount: payment.price_amount,
+            priceCurrency: payment.price_currency,
+            payCurrency: payment.pay_currency,
+          });
+          topup = result.topup;
+          if (result.transaction) {
+            broadcastCreditUpdate(result.transaction);
+            void processCreditNotifications().catch(error =>
+              console.error("Credit notification processing failed:", error),
+            );
+          }
+        } catch (error) {
+          console.error(`Top-up status refresh failed for ${topup.id}:`, error);
+        }
+      }
+      res.json(topup);
+    } catch (error) {
+      console.error("Error fetching credit top-up:", error);
+      res.status(500).json({ error: "Failed to fetch credit top-up" });
+    }
+  });
+
+  app.get("/api/admin/credit-transactions", requireAdmin, async (_req, res) => {
+    try {
+      res.json(await creditStorage.getAllTransactions());
+    } catch (error) {
+      console.error("Error fetching credit transactions:", error);
+      res.status(500).json({ error: "Failed to fetch credit transactions" });
+    }
+  });
+
+  app.post("/api/admin/users/:userId/credit", requireAdmin, async (req, res) => {
+    const auth = getRequestSession(req)!;
+    try {
+      const input = z.object({
+        amountCents: z.coerce.number().int().min(-1_000_000).max(1_000_000)
+          .refine(value => value !== 0, "Amount cannot be zero"),
+        reason: z.string().trim().min(3).max(500),
+      }).parse(req.body);
+      const idempotencyKey = z.string().min(16).max(200)
+        .parse(req.headers["x-idempotency-key"]);
+      const result = await creditStorage.adjustCredit({
+        userId: req.params.userId,
+        amountCents: input.amountCents,
+        reason: input.reason,
+        actorUserId: auth.session.userId,
+        actorEmail: auth.session.email,
+        idempotencyKey,
+      });
+      broadcastCreditUpdate(result.transaction);
+      void processCreditNotifications().catch(error =>
+        console.error("Credit notification processing failed:", error),
+      );
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors[0]?.message || "Invalid adjustment" });
+      }
+      if (error instanceof InsufficientCreditError) {
+        return res.status(409).json({
+          error: error.message,
+          balanceCents: error.balanceCents,
+          requiredCents: error.requiredCents,
+        });
+      }
+      if (error instanceof CreditOperationError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      console.error("Error adjusting account credit:", error);
+      res.status(500).json({ error: "Failed to adjust account credit" });
+    }
+  });
+
+  app.post("/api/admin/orders/:orderId/refund-credit", requireAdmin, async (req, res) => {
+    const auth = getRequestSession(req)!;
+    try {
+      const input = z.object({
+        reason: z.string().trim().min(3).max(500),
+      }).parse(req.body);
+      const result = await creditStorage.refundOrderToCredit({
+        orderId: req.params.orderId,
+        reason: input.reason,
+        actorUserId: auth.session.userId,
+        actorEmail: auth.session.email,
+      });
+      broadcastOrderUpdate("order_updated", result.order);
+      broadcastCreditUpdate(result.transaction);
+      void processCreditNotifications().catch(error =>
+        console.error("Credit notification processing failed:", error),
+      );
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors[0]?.message || "Invalid refund" });
+      }
+      if (error instanceof CreditOperationError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      console.error("Error refunding order to credit:", error);
+      res.status(500).json({ error: "Failed to refund order" });
+    }
+  });
+
+  // Create payment
+  app.post("/api/payments/create", paymentLimiter, async (req, res) => {
+    try {
       const request = z.object({
         currency: z.string().min(1).max(20),
         orderId: z.string().min(1).max(200),
@@ -1958,8 +2281,10 @@ export async function registerRoutes(
         productId: z.string().optional(),
         quantity: z.coerce.number().int().min(1).max(100).optional(),
         items: z.unknown().optional(),
+        paymentMethod: z.enum(["crypto", "credit"]).optional().default("crypto"),
       }).parse(req.body);
-      const { currency, orderId, email, productId, quantity, items } = request;
+      const { currency, orderId, email, productId, quantity, items, paymentMethod } = request;
+      const auth = getRequestSession(req);
 
       const requestedItems = checkoutItemsSchema.parse(
         Array.isArray(items) && items.length > 0
@@ -2010,16 +2335,59 @@ export async function registerRoutes(
                         req.socket.remoteAddress || 
                         'unknown';
 
+      if (paymentMethod === "credit") {
+        if (!auth) {
+          return res.status(401).json({ error: "Sign in to pay with account credit" });
+        }
+        const idempotencyKey = z.string().min(16).max(200)
+          .parse(req.headers["x-idempotency-key"]);
+        const purchase = await creditStorage.purchaseWithCredit({
+          orderId,
+          userId: auth.session.userId,
+          ipAddress,
+          lines: Array.from(quantitiesByProduct).map(([lineProductId, lineQuantity]) => ({
+            productId: lineProductId,
+            quantity: lineQuantity,
+          })),
+          idempotencyKey,
+        });
+        broadcastOrderUpdate("order_created", purchase.order);
+        broadcastCreditUpdate(purchase.transaction);
+        for (const updatedProductId of purchase.productIds) {
+          const updatedProduct = await storage.getProduct(updatedProductId);
+          if (updatedProduct) broadcastProductUpdate("product_updated", updatedProduct);
+        }
+        notifyTelegramOrder(purchase.order, false);
+        void processCreditNotifications().catch(error =>
+          console.error("Credit notification processing failed:", error),
+        );
+        const fulfilledOrder = await fulfillCompletedOrder(purchase.order.orderId);
+        return res.json({
+          creditPayment: true,
+          payment_status: "finished",
+          payment_id: purchase.order.paymentId,
+          order: fulfilledOrder || purchase.order,
+        });
+      }
+
+      if (!nowPaymentsService.isConfigured()) {
+        return res.status(400).json({ error: "Payment gateway not configured" });
+      }
+
+      const checkoutEmail = auth ? auth.session.email : email;
+
       await storage.createOrderWithItems({
         orderId,
+        userId: auth?.session.userId,
         productId: checkoutLines[0].product.id,
         productName: orderProductName,
         quantity: totalQuantity,
         totalAmount: authoritativeAmount,
         status: "creating",
-        email,
+        email: checkoutEmail,
         createdAt: new Date().toISOString(),
         ipAddress,
+        paymentMethod: "crypto",
       }, checkoutLines.map(line => ({
         orderId,
         productId: line.product.id,
@@ -2105,6 +2473,22 @@ export async function registerRoutes(
 
       // Update order status based on payment status
       if (order_id) {
+        if (typeof order_id === "string" && order_id.startsWith("CREDIT-")) {
+          const topupId = order_id.slice("CREDIT-".length);
+          const result = await creditStorage.applyTopupGatewayStatus(topupId, {
+            paymentId: payment_id?.toString() || "",
+            status: payment_status,
+            priceAmount: typeof req.body.price_amount === "number" ? req.body.price_amount : undefined,
+            priceCurrency: req.body.price_currency,
+            payCurrency: req.body.pay_currency,
+          });
+          if (result.transaction) {
+            broadcastCreditUpdate(result.transaction);
+            void processCreditNotifications().catch(error =>
+              console.error("Credit notification processing failed:", error),
+            );
+          }
+        } else {
         const newStatus = payment_status === "finished" ? "completed" 
           : payment_status === "failed" ? "failed"
           : payment_status === "expired" ? "expired"
@@ -2122,6 +2506,7 @@ export async function registerRoutes(
             broadcastOrderUpdate("order_updated", updatedOrder);
             notifyTelegramOrder(updatedOrder, true);
           }
+        }
         }
       }
 
@@ -2680,11 +3065,13 @@ export async function registerRoutes(
   const reviewsWss = new WebSocketServer({ noServer: true });
   const statusWss = new WebSocketServer({ noServer: true });
   const updateWss = new WebSocketServer({ noServer: true, handleProtocols: echoProto });
+  const creditsWss = new WebSocketServer({ noServer: true, handleProtocols: echoProto });
 
   // Manual WebSocket upgrade router — only handle /ws/* paths, leave others for Vite HMR
   // Admin-only WS endpoints stream sensitive PII (orders, DB ops, update progress)
   // and MUST require a valid admin session token at handshake time.
   const ADMIN_WS_PATHS = new Set(["/ws/orders", "/ws/database", "/ws/updates"]);
+  const AUTH_WS_PATHS = new Set([...ADMIN_WS_PATHS, "/ws/credits"]);
 
   httpServer.on("upgrade", (req, socket, head) => {
     const parsed = req.url ? new URL(req.url, "http://localhost") : null;
@@ -2701,6 +3088,7 @@ export async function registerRoutes(
       "/ws/reviews": reviewsWss,
       "/ws/status": statusWss,
       "/ws/updates": updateWss,
+      "/ws/credits": creditsWss,
     };
     const server = wsMap[pathname];
     if (!server) {
@@ -2711,16 +3099,21 @@ export async function registerRoutes(
     // Enforce admin auth on sensitive WS endpoints.
     // Token is read from the Sec-WebSocket-Protocol header (preferred — not
     // logged by proxies) with a fallback to ?token= query string.
-    let adminToken: string | undefined;
-    if (ADMIN_WS_PATHS.has(pathname)) {
+    let authenticatedToken: string | undefined;
+    let authenticatedSession: { userId: string; email: string; role: string; expiresAt: Date } | undefined;
+    if (AUTH_WS_PATHS.has(pathname)) {
       const protoHeader = req.headers["sec-websocket-protocol"] as string | undefined;
       const protoToken = protoHeader
         ? protoHeader.split(",").map((p) => p.trim()).find((p) => p.length > 0)
         : undefined;
-      adminToken = protoToken || parsed?.searchParams.get("token") || undefined;
+      authenticatedToken = protoToken || parsed?.searchParams.get("token") || undefined;
 
-      const session = adminToken ? sessions.get(adminToken) : undefined;
-      if (!session || session.expiresAt < new Date() || session.role !== "admin") {
+      authenticatedSession = authenticatedToken ? sessions.get(authenticatedToken) : undefined;
+      if (
+        !authenticatedSession ||
+        authenticatedSession.expiresAt < new Date() ||
+        (ADMIN_WS_PATHS.has(pathname) && authenticatedSession.role !== "admin")
+      ) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
@@ -2729,8 +3122,14 @@ export async function registerRoutes(
 
     server.handleUpgrade(req, socket as any, head, (ws) => {
       // Bind admin WS to its session token so revocation force-closes it.
-      if (adminToken) {
-        registerAdminWs(adminToken, ws);
+      if (authenticatedToken && ADMIN_WS_PATHS.has(pathname)) {
+        registerAdminWs(authenticatedToken, ws);
+      }
+      if (pathname === "/ws/credits" && authenticatedSession) {
+        creditSubscribers.set(ws, {
+          userId: authenticatedSession.userId,
+          role: authenticatedSession.role,
+        });
       }
       server.emit("connection", ws, req);
     });
@@ -2945,6 +3344,12 @@ export async function registerRoutes(
     ws.on("error", () => {
       orderSubscribers.delete(ws);
     });
+  });
+
+  creditsWss.on("connection", (ws) => {
+    const cleanup = () => creditSubscribers.delete(ws);
+    ws.on("close", cleanup);
+    ws.on("error", cleanup);
   });
 
   wss.on("connection", (ws) => {

@@ -28,7 +28,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ShoppingCart, Clock, CheckCircle2, XCircle, Loader2, Copy, Search, Filter, RefreshCw, Trash2 } from "lucide-react";
+import { ShoppingCart, Clock, CheckCircle2, XCircle, Loader2, Copy, Search, Filter, RefreshCw, Trash2, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
@@ -70,6 +70,8 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  const [refundReason, setRefundReason] = useState("");
 
   const syncMutation = useMutation({
     mutationFn: async () => {
@@ -114,6 +116,15 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
         variant: "destructive",
       });
     },
+  });
+  const refundMutation = useMutation({
+    mutationFn: async () => {
+      if (!refundOrder || !refundReason.trim()) throw new Error("A refund reason is required");
+      const res = await apiRequest("POST", `/api/admin/orders/${refundOrder.id}/refund-credit`, { reason: refundReason.trim() });
+      return res.json();
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); queryClient.invalidateQueries({ queryKey: ["/api/admin/registered-users"] }); queryClient.invalidateQueries({ queryKey: ["/api/admin/credit-transactions"] }); toast({ title: "Refund issued", description: "The order total was returned as account credit." }); setRefundOrder(null); setRefundReason(""); },
+    onError: (e: Error) => toast({ title: "Refund failed", description: e.message, variant: "destructive" }),
   });
 
   const copyText = (text: string, label: string) => {
@@ -229,6 +240,7 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
             <TableBody>
               {filteredOrders.map((order) => {
                 const status = statusConfig[order.status] || statusConfig.pending;
+                const canRefund = (order.status === "completed" || order.status === "finished") && !!(order as any).userId && !(order as any).refundedAt;
                 return (
                   <TableRow key={order.id}>
                     <TableCell>
@@ -304,6 +316,7 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
                       </span>
                     </TableCell>
                     <TableCell>
+                      {canRefund && <Button variant="outline" size="sm" className="mr-2 gap-1" onClick={() => { setRefundOrder(order); setRefundReason(""); }} data-testid={`button-refund-credit-${order.id}`}><WalletCards className="h-3.5 w-3.5" />Refund</Button>}
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button
@@ -343,6 +356,13 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
           </Table>
         </div>
       )}
+      <AlertDialog open={!!refundOrder} onOpenChange={(open) => !open && setRefundOrder(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Refund to account credit</AlertDialogTitle><AlertDialogDescription>This returns {refundOrder ? `$${refundOrder.totalAmount.toFixed(2)}` : ""} to the customer’s account balance. Product credentials are not restored. Enter a reason for the audit log.</AlertDialogDescription></AlertDialogHeader>
+          <Input placeholder="Refund reason (required)" value={refundReason} onChange={e => setRefundReason(e.target.value)} data-testid="input-refund-reason" />
+          <AlertDialogFooter><AlertDialogCancel data-testid="button-cancel-refund">Cancel</AlertDialogCancel><AlertDialogAction onClick={(e) => { e.preventDefault(); refundMutation.mutate(); }} disabled={refundMutation.isPending || !refundReason.trim()} data-testid="button-confirm-refund">{refundMutation.isPending ? "Issuing…" : "Confirm refund"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

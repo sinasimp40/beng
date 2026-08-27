@@ -15,6 +15,8 @@ import { User, Package, ShoppingBag, LogOut, ArrowLeft, Search, Filter, Eye, Eye
 import { useOrderUpdates } from "@/hooks/use-order-updates";
 import { useToast } from "@/hooks/use-toast";
 import { PaymentModal } from "@/components/payment-modal";
+import { CreditTopup } from "@/components/credit-topup";
+import { useCreditUpdates } from "@/hooks/use-credit-updates";
 import type { Order, OrderItem } from "@shared/schema";
 
 type DashboardOrder = Order & { items?: OrderItem[] };
@@ -33,6 +35,7 @@ export default function Dashboard() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const { toast } = useToast();
+  useCreditUpdates();
 
   // Handle session invalidation
   useEffect(() => {
@@ -329,6 +332,8 @@ export default function Dashboard() {
               </div>
             </CardHeader>
           </Card>
+
+          <CreditTopup />
 
           <Card className="border-primary/20">
             <CardHeader className="flex flex-col gap-4 pb-4">

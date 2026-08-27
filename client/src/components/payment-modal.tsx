@@ -65,6 +65,7 @@ interface PaymentModalProps {
 
 type ModalStep = "form" | "processing" | "awaiting_payment" | "confirming" | "success" | "error" | "expired";
 type CryptoOption = "btc" | "eth" | "ltc" | "usdt" | "doge" | "xmr" | "xrp" | "bnb" | "sol";
+type PaymentMethod = "crypto" | "credit";
 
 interface PaymentData {
   payment_id: string;
@@ -116,6 +117,7 @@ export function PaymentModal({
   const { user } = useAuth();
   const [email, setEmail] = useState("");
   const [selectedCrypto, setSelectedCrypto] = useState<CryptoOption>("btc");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("crypto");
   const [step, setStep] = useState<ModalStep>("form");
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -131,6 +133,7 @@ export function PaymentModal({
   }, [open, user?.email]);
 
   const resumePaymentIdRef = useRef<string | null>(null);
+  const creditOperationRef = useRef<{ orderId: string; idempotencyKey: string } | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -181,6 +184,7 @@ export function PaymentModal({
         setStep("awaiting_payment");
       }
     } else if (open && !existingOrder) {
+      creditOperationRef.current = null;
       setStep("form");
       setPaymentData(null);
       setErrorMessage("");
@@ -384,7 +388,14 @@ export function PaymentModal({
     setStep("processing");
 
     try {
-      const newOrderId = `ORDER-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const creditOperation = paymentMethod === "credit"
+        ? (creditOperationRef.current ||= {
+            orderId: `ORDER-${crypto.randomUUID()}`,
+            idempotencyKey: crypto.randomUUID(),
+          })
+        : null;
+      const newOrderId = creditOperation?.orderId ||
+        `ORDER-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       setOrderId(newOrderId);
       
       const response = await apiRequest("POST", "/api/payments/create", {
@@ -398,9 +409,18 @@ export function PaymentModal({
         items: isCartCheckout
           ? cartItems.map(item => ({ productId: item.productId, quantity: item.quantity }))
           : undefined,
-      });
+        paymentMethod,
+      }, creditOperation
+        ? { "X-Idempotency-Key": creditOperation.idempotencyKey }
+        : undefined);
 
       const payment = await response.json();
+      if (paymentMethod === "credit" && payment.creditPayment) {
+        setPaymentData({ ...payment, payment_id: payment.payment_id || `credit-${newOrderId}`, payment_status: "finished", pay_address: "", pay_amount: 0, pay_currency: "credit", price_amount: totalAmount, price_currency: "usd", order_id: newOrderId });
+        setStep("success");
+        onPaymentComplete(String(payment.payment_id || `credit-${newOrderId}`));
+        return;
+      }
       setPaymentData({ ...payment, order_id: newOrderId });
       setStep("awaiting_payment");
       
@@ -443,6 +463,7 @@ export function PaymentModal({
     setErrorMessage("");
     setOrderId("");
     setSentStock(null);
+    creditOperationRef.current = null;
     onOpenChange(false);
   };
 
@@ -593,10 +614,14 @@ export function PaymentModal({
               <div className="space-y-3">
                 <Label className="text-sm text-gray-500 dark:text-[hsl(0_0%_60%)] font-medium">Payment Method</Label>
                 <div className="grid grid-cols-3 gap-2">
+                  {user && <button onClick={() => setPaymentMethod("credit")} className={`relative col-span-3 flex items-center justify-between gap-3 rounded-xl border p-3 text-left transition-all ${paymentMethod === "credit" ? "border-primary/40 bg-primary/[0.08]" : "border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]"}`} data-testid="button-payment-credit">
+                    <span className="flex items-center gap-3"><CreditCard className="h-5 w-5 text-primary" /><span><span className="block text-sm font-medium">Account credit</span><span className="text-xs text-gray-500">Available: ${(((user as any).creditBalanceCents || 0) / 100).toFixed(2)}</span></span></span>
+                    {((user as any).creditBalanceCents || 0) < Math.round(totalAmount * 100) && <span className="text-xs text-destructive">Insufficient balance</span>}
+                  </button>}
                   {cryptoOptions.map((crypto) => (
                     <button
                       key={crypto.id}
-                      onClick={() => setSelectedCrypto(crypto.id)}
+                       onClick={() => { setSelectedCrypto(crypto.id); setPaymentMethod("crypto"); }}
                       className={`
                         relative flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all duration-200
                         ${selectedCrypto === crypto.id 
@@ -627,6 +652,7 @@ export function PaymentModal({
 
               <Button
                 onClick={handleCreatePayment}
+                disabled={paymentMethod === "credit" && ((user as any)?.creditBalanceCents || 0) < Math.round(totalAmount * 100)}
                 size="lg"
                 className="w-full gap-2.5 bg-primary text-white font-bold uppercase tracking-wider text-sm shadow-lg shadow-primary/25"
                 data-testid="button-create-payment"

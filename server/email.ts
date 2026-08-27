@@ -271,6 +271,7 @@ class EmailService {
     to: string;
     subject: string;
     html: string;
+    messageId?: string;
   }): Promise<{ success: boolean; error?: string }> {
     if (!this.isConfigured() || !this.transporter) {
       console.log("Email not configured, skipping email send");
@@ -283,6 +284,7 @@ class EmailService {
         to: params.to,
         subject: params.subject,
         html: params.html,
+        messageId: params.messageId,
       });
 
       console.log(`Email sent successfully to ${params.to}`);

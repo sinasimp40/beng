@@ -8,6 +8,7 @@ interface AuthContextType {
   login: (email: string, password: string, recaptchaToken: string) => Promise<void>;
   register: (email: string, password: string, recaptchaToken: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   isAdmin: boolean;
   sessionInvalidated: boolean;
 }
@@ -164,6 +165,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
+  const refreshUser = useCallback(async () => {
+    if (token) await fetchSession(token);
+  }, [token, fetchSession]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -173,6 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         register,
         logout,
+        refreshUser,
         isAdmin: user?.role === "admin",
         sessionInvalidated,
       }}

@@ -1,5 +1,5 @@
 import { db, pool } from "../db";
-import { users, products, orders, orderItems, emailTemplates, settings, passwordResetTokens, reviews } from "@shared/schema";
+import { users, products, orders, orderItems, creditTopups, creditTransactions, emailTemplates, settings, passwordResetTokens, reviews } from "@shared/schema";
 import type { BackupProgress, DatabaseExport } from "@shared/schema";
 import { WebSocket } from "ws";
 import crypto from "crypto";
@@ -10,6 +10,8 @@ const TABLES = [
   { name: 'products', table: products },
   { name: 'orders', table: orders },
   { name: 'orderItems', table: orderItems },
+  { name: 'creditTopups', table: creditTopups },
+  { name: 'creditTransactions', table: creditTransactions },
   { name: 'emailTemplates', table: emailTemplates },
   { name: 'settings', table: settings },
   { name: 'passwordResetTokens', table: passwordResetTokens },
@@ -293,6 +295,28 @@ export async function importDatabase(
     return { success: false, message: 'Invalid import file format', details };
   }
 
+  // Credit ledgers refer to stable user IDs. Refuse a merge that would attach
+  // an imported balance to one ID while leaving its ledger on another.
+  const importedCreditRows = [
+    ...(importData.tables.creditTransactions?.data || []),
+    ...(importData.tables.creditTopups?.data || []),
+    ...(importData.tables.orders?.data || []).filter((row: any) => row.userId),
+  ] as Array<{ userId?: string }>;
+  for (const importedUser of (importData.tables.users?.data || []) as Array<{ id: string; email: string }>) {
+    const [existingUser] = await db.select().from(users).where(eq(users.email, importedUser.email));
+    const hasFinancialReferences = importedCreditRows.some(row => row.userId === importedUser.id);
+    if (existingUser && existingUser.id !== importedUser.id && hasFinancialReferences) {
+      const message = `Import stopped: account ${importedUser.email} conflicts with existing credit history`;
+      onProgress({
+        jobId,
+        phase: 'error',
+        percent: 0,
+        message,
+      });
+      return { success: false, message, details };
+    }
+  }
+
   // Log what we received for debugging
   console.log('=== Starting Database Import ===');
   console.log('Import file version:', importData.version);
@@ -399,6 +423,7 @@ export async function importDatabase(
                 password: userRow.password,
                 role: userRow.role,
                 banned: userRow.banned,
+                creditBalanceCents: (userRow as any).creditBalanceCents || 0,
               }).where(eq(users.email, userRow.email));
               console.log(`Updated existing user: ${userRow.email}`);
             } else {
@@ -408,6 +433,7 @@ export async function importDatabase(
                 password: userRow.password,
                 role: userRow.role,
                 banned: userRow.banned,
+                creditBalanceCents: (userRow as any).creditBalanceCents || 0,
                 createdAt: userRow.createdAt,
               });
               console.log(`Inserted new user: ${userRow.email}`);
@@ -439,6 +465,7 @@ export async function importDatabase(
             if (existing.length > 0) {
               await db.update(orders).set({
                 orderId: orderRow.orderId,
+                userId: orderRow.userId || null,
                 productId: orderRow.productId,
                 productName: orderRow.productName,
                 quantity: orderRow.quantity,
@@ -452,7 +479,13 @@ export async function importDatabase(
                 sentStock: orderRow.sentStock,
                 deliveryStatus: orderRow.deliveryStatus || 'pending',
                 deliveryAttemptedAt: orderRow.deliveryAttemptedAt || null,
+                deliveryAttempts: orderRow.deliveryAttempts || 0,
+                deliveryLeaseId: orderRow.deliveryLeaseId || null,
                 ipAddress: orderRow.ipAddress,
+                paymentMethod: orderRow.paymentMethod || 'crypto',
+                refundedAt: orderRow.refundedAt || null,
+                refundedBy: orderRow.refundedBy || null,
+                refundReason: orderRow.refundReason || null,
               }).where(eq(orders.id, orderRow.id));
               console.log(`Updated existing order: ${orderRow.orderId}`);
             } else {

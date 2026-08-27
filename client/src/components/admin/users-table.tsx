@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useOrderUpdates } from "@/hooks/use-order-updates";
-import { Search, Users, Eye, Package, Globe, Calendar, Ban, Key, Mail, MoreHorizontal, CheckCircle, Trash2 } from "lucide-react";
+import { Search, Users, Eye, Package, Globe, Calendar, Ban, Key, Mail, MoreHorizontal, CheckCircle, Trash2, WalletCards } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Order, SafeUser } from "@shared/schema";
 
@@ -29,9 +29,12 @@ export function UsersTable() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
-  const [editDialog, setEditDialog] = useState<"password" | "email" | "ban" | "delete" | null>(null);
+  const [editDialog, setEditDialog] = useState<"password" | "email" | "ban" | "delete" | "credit" | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditReason, setCreditReason] = useState("");
+  const creditIdempotencyRef = useRef<string | null>(null);
 
   // WebSocket for real-time order updates
   useOrderUpdates({ isAdmin: true });
@@ -113,6 +116,20 @@ export function UsersTable() {
         variant: "destructive",
       });
     },
+  });
+  const creditMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingUser) throw new Error("Select a user");
+      const amount = Number(creditAmount);
+      if (!Number.isInteger(amount) || amount === 0) throw new Error("Enter a non-zero whole number of cents");
+      if (!creditReason.trim()) throw new Error("A reason is required");
+      const idempotencyKey = creditIdempotencyRef.current ||= crypto.randomUUID();
+      const res = await fetch(`/api/admin/users/${editingUser.id}/credit`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Idempotency-Key": idempotencyKey }, credentials: "include", body: JSON.stringify({ amountCents: amount, reason: creditReason.trim() }) });
+      if (!res.ok) throw new Error((await res.json()).error || "Balance adjustment failed");
+      return res.json();
+    },
+    onSuccess: async () => { toast({ title: "Balance adjusted", description: "The credit ledger has been updated." }); await queryClient.refetchQueries({ queryKey: ["/api/admin/registered-users"] }); queryClient.invalidateQueries({ queryKey: ["/api/admin/credit-transactions"] }); creditIdempotencyRef.current = null; setEditDialog(null); setEditingUser(null); setCreditAmount(""); setCreditReason(""); },
+    onError: (e: Error) => toast({ title: "Adjustment failed", description: e.message, variant: "destructive" }),
   });
 
   const getRegisteredUser = (email: string): SafeUser | undefined => {
@@ -377,6 +394,7 @@ export function UsersTable() {
                       >
                         <Eye className="w-4 h-4" />
                       </Button>
+                      {registeredUser && <Button size="icon" variant="ghost" title="Adjust balance" onClick={() => { creditIdempotencyRef.current = null; setEditingUser(registeredUser); setCreditAmount(""); setCreditReason(""); setEditDialog("credit"); }} data-testid={`button-adjust-credit-${registeredUser.id}`}><WalletCards className="w-4 h-4" /></Button>}
                       {registeredUser ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -422,10 +440,14 @@ export function UsersTable() {
                       <span className="text-muted-foreground text-xs">Orders</span>
                       <p className="font-medium">{user.orderCount}</p>
                     </div>
-                    <div>
+                      <div>
                       <span className="text-muted-foreground text-xs">Total Spent</span>
                       <p className="font-semibold text-primary">${user.totalSpent.toFixed(2)}</p>
                     </div>
+                      <div>
+                        <span className="text-muted-foreground text-xs">Credit balance</span>
+                        <p className="font-semibold">${((registeredUser?.creditBalanceCents || 0) / 100).toFixed(2)}</p>
+                      </div>
                     <div>
                       <span className="text-muted-foreground text-xs">Last Order</span>
                       <p>{new Date(user.lastOrder).toLocaleDateString()}</p>
@@ -459,6 +481,7 @@ export function UsersTable() {
                 <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
                 <th className="text-left p-4 font-medium text-muted-foreground">Orders</th>
                 <th className="text-left p-4 font-medium text-muted-foreground">Total Spent</th>
+                <th className="text-left p-4 font-medium text-muted-foreground">Credit</th>
                 <th className="text-left p-4 font-medium text-muted-foreground hidden lg:table-cell">Last Order</th>
                 <th className="text-left p-4 font-medium text-muted-foreground hidden xl:table-cell">IPs</th>
                 <th className="text-right p-4 font-medium text-muted-foreground">Actions</th>
@@ -467,7 +490,7 @@ export function UsersTable() {
             <tbody>
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
                     <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
                     No users found
                   </td>
@@ -499,6 +522,9 @@ export function UsersTable() {
                         <Badge variant="secondary">{user.orderCount}</Badge>
                       </td>
                       <td className="p-4 text-primary font-semibold">${user.totalSpent.toFixed(2)}</td>
+                      <td className="p-4 font-semibold" data-testid={`credit-balance-${registeredUser?.id || user.email}`}>
+                        ${((registeredUser?.creditBalanceCents || 0) / 100).toFixed(2)}
+                      </td>
                       <td className="p-4 text-sm text-muted-foreground hidden lg:table-cell">
                         {new Date(user.lastOrder).toLocaleDateString()}
                       </td>
@@ -533,6 +559,7 @@ export function UsersTable() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => { creditIdempotencyRef.current = null; setEditingUser(registeredUser); setCreditAmount(""); setCreditReason(""); setEditDialog("credit"); }}><WalletCards className="w-4 h-4 mr-2" />Adjust balance</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleBanUser(registeredUser)} data-testid={`menu-ban-${user.email}`}>
                                   <Ban className="w-4 h-4 mr-2" />
                                   {registeredUser.banned === 1 ? "Unban User" : "Ban User"}
@@ -643,6 +670,19 @@ export function UsersTable() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editDialog === "credit"} onOpenChange={(open) => { if (!open) { creditIdempotencyRef.current = null; setEditDialog(null); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><WalletCards className="w-5 h-5 text-primary" />Adjust account credit</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">Adjusting <span className="font-medium text-foreground">{editingUser?.email}</span>. Enter cents as a signed integer.</p>
+            <div className="space-y-2"><Label htmlFor="credit-adjustment">Amount in cents</Label><Input id="credit-adjustment" type="number" step="1" placeholder="e.g. 2500 or -500" value={creditAmount} onChange={e => setCreditAmount(e.target.value)} data-testid="input-credit-adjustment" /></div>
+            <div className="space-y-2"><Label htmlFor="credit-reason">Reason</Label><Input id="credit-reason" placeholder="Required audit note" value={creditReason} onChange={e => setCreditReason(e.target.value)} data-testid="input-credit-reason" /></div>
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">This changes the customer’s spendable balance immediately and is recorded in the ledger.</div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => { creditIdempotencyRef.current = null; setEditDialog(null); }} data-testid="button-cancel-credit-adjustment">Cancel</Button><Button onClick={() => creditMutation.mutate()} disabled={creditMutation.isPending} data-testid="button-confirm-credit-adjustment">{creditMutation.isPending ? "Saving…" : "Confirm adjustment"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

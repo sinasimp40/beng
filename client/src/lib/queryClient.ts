@@ -34,10 +34,12 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  extraHeaders?: HeadersInit,
 ): Promise<Response> {
   const headers: HeadersInit = {
     ...getAuthHeaders(),
     ...(data ? { "Content-Type": "application/json" } : {}),
+    ...extraHeaders,
   };
 
   const res = await fetch(url, {

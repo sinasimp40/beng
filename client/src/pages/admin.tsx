@@ -22,6 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Package, DollarSign, BarChart3, Settings, ShoppingBag, ClipboardList, CheckCircle2, Clock, Mail, TrendingUp, Calendar, CalendarDays, Users, Database, Loader2, MessageCircle, Download } from "lucide-react";
 import { UsersTable } from "@/components/admin/users-table";
+import { CreditLogs } from "@/components/admin/credit-logs";
+import { useCreditUpdates } from "@/hooks/use-credit-updates";
 import { DatabaseSettings } from "@/components/admin/database-settings";
 import { SocialLinksSettings } from "@/components/admin/social-links-settings";
 import { ThemeSettings } from "@/components/admin/theme-settings";
@@ -37,6 +39,7 @@ const adminTabs = [
   { value: "products", label: "Products", icon: ShoppingBag },
   { value: "orders", label: "Orders", icon: ClipboardList },
   { value: "users", label: "Users", icon: Users },
+  { value: "credits", label: "Credit logs", icon: DollarSign },
   { value: "reviews", label: "Reviews", icon: Star },
   { value: "settings", label: "Settings", icon: Settings },
   { value: "theme", label: "Theme", icon: Palette },
@@ -55,6 +58,7 @@ export default function Admin() {
 
   // Enable real-time product updates via WebSocket
   useProductUpdates();
+  useCreditUpdates();
 
   // Redirect to home if not admin
   useEffect(() => {
@@ -711,6 +715,10 @@ export default function Admin() {
 
             <TabsContent value="users">
               <UsersTable />
+            </TabsContent>
+
+            <TabsContent value="credits">
+              <CreditLogs />
             </TabsContent>
 
             <TabsContent value="reviews">

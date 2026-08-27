@@ -9,6 +9,7 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   role: text("role").notNull().default("user"),
   banned: integer("banned").notNull().default(0),
+  creditBalanceCents: integer("credit_balance_cents").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`now()`),
 });
 
@@ -304,6 +305,7 @@ export type ProductWithVariants = Product & { variants?: Product[] };
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: text("order_id").notNull().unique(),
+  userId: varchar("user_id"),
   productId: varchar("product_id").notNull(),
   productName: text("product_name"),
   quantity: integer("quantity").notNull().default(1),
@@ -321,6 +323,10 @@ export const orders = pgTable("orders", {
   deliveryAttempts: integer("delivery_attempts").notNull().default(0),
   deliveryLeaseId: text("delivery_lease_id"),
   ipAddress: text("ip_address"),
+  paymentMethod: text("payment_method").notNull().default("crypto"),
+  refundedAt: text("refunded_at"),
+  refundedBy: varchar("refunded_by"),
+  refundReason: text("refund_reason"),
 });
 
 // Individual products included in a payment. Existing orders without rows in
@@ -358,6 +364,64 @@ export const insertOrderSchema = createInsertSchema(orders).omit({
 
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
+
+// Immutable account-credit ledger. The user's balance is a cached aggregate;
+// every mutation is represented exactly once by an idempotency-keyed row.
+export const creditTransactions = pgTable("credit_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  userEmail: text("user_email").notNull(),
+  type: text("type").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  balanceAfterCents: integer("balance_after_cents").notNull(),
+  status: text("status").notNull().default("completed"),
+  idempotencyKey: text("idempotency_key").notNull().unique().default(sql`gen_random_uuid()::text`),
+  operationFingerprint: text("operation_fingerprint").notNull().default(""),
+  orderId: text("order_id"),
+  topupId: varchar("topup_id"),
+  actorUserId: varchar("actor_user_id"),
+  actorEmail: text("actor_email"),
+  reason: text("reason"),
+  notificationStatus: text("notification_status").notNull().default("pending"),
+  notificationAttempts: integer("notification_attempts").notNull().default(0),
+  notificationLeaseId: text("notification_lease_id"),
+  notificationAttemptedAt: text("notification_attempted_at"),
+  notificationLastError: text("notification_last_error"),
+  notifiedAt: text("notified_at"),
+  createdAt: text("created_at").notNull().default(sql`now()`),
+});
+
+export const creditTopups = pgTable("credit_topups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  idempotencyKey: text("idempotency_key").notNull().unique().default(sql`gen_random_uuid()::text`),
+  operationFingerprint: text("operation_fingerprint").notNull().default(""),
+  userId: varchar("user_id").notNull(),
+  userEmail: text("user_email").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  status: text("status").notNull().default("creating"),
+  paymentId: text("payment_id").unique(),
+  payCurrency: text("pay_currency").notNull(),
+  payAddress: text("pay_address"),
+  payAmount: real("pay_amount"),
+  gatewayStatus: text("gateway_status"),
+  transactionId: varchar("transaction_id"),
+  lastReconciledAt: text("last_reconciled_at"),
+  createdAt: text("created_at").notNull().default(sql`now()`),
+  completedAt: text("completed_at"),
+  updatedAt: text("updated_at").notNull().default(sql`now()`),
+});
+
+export const insertCreditTransactionSchema = createInsertSchema(creditTransactions).omit({
+  id: true,
+});
+export const insertCreditTopupSchema = createInsertSchema(creditTopups).omit({
+  id: true,
+});
+
+export type CreditTransaction = typeof creditTransactions.$inferSelect;
+export type InsertCreditTransaction = z.infer<typeof insertCreditTransactionSchema>;
+export type CreditTopup = typeof creditTopups.$inferSelect;
+export type InsertCreditTopup = z.infer<typeof insertCreditTopupSchema>;
 
 export const insertEmailTemplateSchema = createInsertSchema(emailTemplates).omit({
   id: true,
