@@ -5,7 +5,7 @@ import hpp from "hpp";
 
 const loginAttempts = new Map<string, { count: number; lastAttempt: number; blockedUntil: number }>();
 
-setInterval(() => {
+const loginAttemptCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, data] of loginAttempts.entries()) {
     if (now - data.lastAttempt > 15 * 60 * 1000) {
@@ -13,6 +13,7 @@ setInterval(() => {
     }
   }
 }, 60 * 1000);
+loginAttemptCleanupInterval.unref();
 
 export function checkBruteForce(req: Request, res: Response, next: NextFunction) {
   const ip = req.ip || req.socket.remoteAddress || "unknown";

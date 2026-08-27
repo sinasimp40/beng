@@ -171,7 +171,7 @@ sessions.delete = (token: string) => {
 };
 
 // Cleanup expired sessions periodically (this now also closes their admin WS).
-setInterval(() => {
+const sessionCleanupInterval = setInterval(() => {
   const now = new Date();
   Array.from(sessions.entries()).forEach(([token, session]) => {
     if (session.expiresAt < now) {
@@ -179,6 +179,7 @@ setInterval(() => {
     }
   });
 }, 60000); // Run every minute
+sessionCleanupInterval.unref();
 
 // Store active payment subscriptions for real-time updates
 const paymentSubscriptions = new Map<string, Set<WebSocket>>();
@@ -539,7 +540,15 @@ function startOrderPolling() {
     clearInterval(orderPollingInterval);
   }
   orderPollingInterval = setInterval(pollPendingOrders, 30000);
+  orderPollingInterval.unref();
   console.log("Started automatic order status polling (every 30 seconds)");
+}
+
+export function stopOrderPolling() {
+  if (orderPollingInterval) {
+    clearInterval(orderPollingInterval);
+    orderPollingInterval = null;
+  }
 }
 
 // Broadcast payment status to all subscribers
@@ -645,6 +654,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  httpServer.once("close", stopOrderPolling);
+
   // Authentication endpoints
   app.post("/api/auth/register", authLimiter, checkBruteForce, async (req, res) => {
     try {
@@ -3412,7 +3423,9 @@ export async function registerRoutes(
     }
   }
   
-  setInterval(broadcastStatus, 30000);
+  const statusBroadcastInterval = setInterval(broadcastStatus, 30000);
+  statusBroadcastInterval.unref();
+  httpServer.once("close", () => clearInterval(statusBroadcastInterval));
 
   themeWss.on("connection", (ws) => {
     themeSubscribers.add(ws);

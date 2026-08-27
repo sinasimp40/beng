@@ -1,9 +1,13 @@
-import { after, afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import express from "express";
+import { createServer, type Server } from "node:http";
 import { eq, inArray } from "drizzle-orm";
 import { db, pool } from "./db";
 import { creditStorage, InsufficientCreditError } from "./creditStorage";
+import { hashPassword } from "./auth";
+import { registerRoutes, stopOrderPolling } from "./routes";
 import { importDatabase } from "./services/databaseBackupService";
 import {
   creditTopups,
@@ -19,6 +23,28 @@ const userIds = new Set<string>();
 const productIds = new Set<string>();
 const orderIds = new Set<string>();
 const topupIds = new Set<string>();
+const routeTestPassword = "route-test-password";
+let routeServer: Server | undefined;
+let routeBaseUrl = "";
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  routeServer = createServer(app);
+  await registerRoutes(routeServer, app);
+  await new Promise<void>((resolve, reject) => {
+    routeServer!.once("error", reject);
+    routeServer!.listen(0, "127.0.0.1", () => {
+      const address = routeServer!.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Route test server did not expose an address"));
+        return;
+      }
+      routeBaseUrl = `http://127.0.0.1:${address.port}`;
+      resolve();
+    });
+  });
+});
 
 async function createUser(balanceCents = 0) {
   const id = `credit-test-user-${randomUUID()}`;
@@ -85,10 +111,162 @@ afterEach(async () => {
 });
 
 after(async () => {
+  stopOrderPolling();
+  if (routeServer?.listening) {
+    await new Promise<void>((resolve, reject) => {
+      routeServer!.close(error => error ? reject(error) : resolve());
+    });
+  }
   await pool.end();
 });
 
+async function httpRequest(
+  path: string,
+  options: { method?: string; token?: string; body?: unknown } = {},
+) {
+  const headers: Record<string, string> = {};
+  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  if (options.body !== undefined) headers["content-type"] = "application/json";
+  const response = await fetch(`${routeBaseUrl}${path}`, {
+    method: options.method || "GET",
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : undefined,
+  };
+}
+
+async function createRouteUser(role: "user" | "admin") {
+  const user = await createUser();
+  await db.update(users)
+    .set({ password: await hashPassword(routeTestPassword), role })
+    .where(eq(users.id, user.id));
+  return user;
+}
+
+async function loginRouteUser(user: { email: string }) {
+  const response = await httpRequest("/api/auth/login", {
+    method: "POST",
+    body: { email: user.email, password: routeTestPassword },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(typeof response.body?.token, "string");
+  return response.body.token as string;
+}
+
+async function createExhaustedCreditEmail() {
+  const user = await createUser();
+  const adjustment = await creditStorage.adjustCredit({
+    userId: user.id,
+    amountCents: 450,
+    reason: "Route test adjustment",
+    actorUserId: user.id,
+    actorEmail: user.email,
+    idempotencyKey: `adjustment-${randomUUID()}`,
+  });
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const claim = (await creditStorage.claimPendingNotifications())
+      .find(item => item.id === adjustment.transaction.id);
+    assert.ok(claim?.notificationLeaseId);
+    await creditStorage.failNotification(
+      claim.id,
+      claim.notificationLeaseId,
+      `Route test SMTP failure ${attempt}`,
+    );
+  }
+
+  return { user, transactionId: adjustment.transaction.id };
+}
+
 describe("account credit integrity", () => {
+  it("blocks non-admins from listing or retrying exhausted credit emails", async () => {
+    const { transactionId } = await createExhaustedCreditEmail();
+    const regularUser = await createRouteUser("user");
+    const regularToken = await loginRouteUser(regularUser);
+
+    const unauthenticatedList = await httpRequest("/api/admin/credit-notifications");
+    const unauthenticatedRetry = await httpRequest(
+      `/api/admin/credit-notifications/${transactionId}/retry`,
+      { method: "POST" },
+    );
+    assert.equal(unauthenticatedList.status, 401);
+    assert.equal(unauthenticatedRetry.status, 401);
+
+    const regularList = await httpRequest("/api/admin/credit-notifications", {
+      token: regularToken,
+    });
+    const regularRetry = await httpRequest(
+      `/api/admin/credit-notifications/${transactionId}/retry`,
+      { method: "POST", token: regularToken },
+    );
+    assert.equal(regularList.status, 403);
+    assert.equal(regularRetry.status, 403);
+
+    const [unchanged] = await db.select().from(creditTransactions)
+      .where(eq(creditTransactions.id, transactionId));
+    const [user] = await db.select().from(users).where(eq(users.id, regularUser.id));
+    assert.equal(unchanged.notificationStatus, "exhausted");
+    assert.equal(unchanged.notificationAttempts, 5);
+    assert.equal(user.creditBalanceCents, 0);
+  });
+
+  it("lists stale final email leases and allows exactly one concurrent admin retry", async () => {
+    const { user, transactionId } = await createExhaustedCreditEmail();
+    await db.update(creditTransactions).set({
+      notificationStatus: "sending",
+      notificationAttempts: 5,
+      notificationLeaseId: randomUUID(),
+      notificationAttemptedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+      notificationLastError: "SMTP request timed out",
+    }).where(eq(creditTransactions.id, transactionId));
+
+    const adminUser = await createRouteUser("admin");
+    const adminToken = await loginRouteUser(adminUser);
+    const listed = await httpRequest("/api/admin/credit-notifications", {
+      token: adminToken,
+    });
+    assert.equal(listed.status, 200);
+    const listedTransaction = listed.body.find(
+      (transaction: { id: string }) => transaction.id === transactionId,
+    );
+    assert.equal(listedTransaction?.notificationStatus, "exhausted");
+    assert.equal(listedTransaction?.notificationAttempts, 5);
+    assert.equal(
+      listedTransaction?.notificationLastError,
+      "Email delivery attempt timed out before completion",
+    );
+
+    const retries = await Promise.all([
+      httpRequest(`/api/admin/credit-notifications/${transactionId}/retry`, {
+        method: "POST",
+        token: adminToken,
+      }),
+      httpRequest(`/api/admin/credit-notifications/${transactionId}/retry`, {
+        method: "POST",
+        token: adminToken,
+      }),
+    ]);
+    assert.deepEqual(retries.map(response => response.status).sort(), [200, 409]);
+    const successfulRetry = retries.find(response => response.status === 200);
+    assert.equal(successfulRetry?.body.id, transactionId);
+    assert.equal(successfulRetry?.body.notificationStatus, "pending");
+    assert.equal(successfulRetry?.body.notificationAttempts, 0);
+
+    const [updatedTransaction] = await db.select().from(creditTransactions)
+      .where(eq(creditTransactions.id, transactionId));
+    const [unchangedUser] = await db.select().from(users).where(eq(users.id, user.id));
+    const ledger = await db.select().from(creditTransactions)
+      .where(eq(creditTransactions.userId, user.id));
+    assert.equal(unchangedUser.creditBalanceCents, 450);
+    assert.equal(ledger.length, 1);
+    assert.equal(updatedTransaction.amountCents, 450);
+    assert.equal(updatedTransaction.type, "admin_credit");
+  });
+
   it("credits a completed gateway top-up exactly once across duplicate callbacks", async () => {
     const user = await createUser();
     const { topup } = await creditStorage.createTopup({
