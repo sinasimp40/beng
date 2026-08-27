@@ -1,1 +1,2 @@
 - [Digital fulfillment integrity](digital-fulfillment-integrity.md) — claim stock and email dispatch through separate durable database ownership steps.
+- [Post-merge dependency safety](post-merge-dependency-safety.md) — keep the setup hook complete; resolve firewall blocks by updating the direct parent dependency.
