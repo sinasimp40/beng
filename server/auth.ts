@@ -1,19 +1,30 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "crypto";
+import { storage } from "./storage";
 
 const RECAPTCHA_VERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 
 export async function verifyRecaptcha(token: string | undefined | null): Promise<boolean> {
-  // Read the secret on every call so that keys loaded from the database at
-  // startup (or rotated at runtime via the admin panel) take effect
-  // immediately, rather than being frozen to whatever value was present
-  // when this module was first imported.
-  const secret = process.env.RECAPTCHA_SECRET_KEY || "";
+  // Read the database configuration on every call so deleting either setting
+  // disables reCAPTCHA immediately, even if an older process environment value
+  // is still present. Both keys are required so the frontend and backend stay
+  // in sync when the feature is enabled again.
+  let siteKey = "";
+  let secret = "";
+  try {
+    const [configuredSiteKey, configuredSecret] = await Promise.all([
+      storage.getSetting("recaptcha_site_key"),
+      storage.getSetting("recaptcha_secret_key"),
+    ]);
+    siteKey = configuredSiteKey?.trim() || "";
+    secret = configuredSecret?.trim() || "";
+  } catch (error) {
+    console.error("Failed to load reCAPTCHA configuration:", error);
+    return false;
+  }
 
-  // reCAPTCHA is an OPT-IN feature: the admin enables it by configuring a
-  // secret key in the admin panel. If no key is configured, the feature is
-  // simply off and we allow the request through. This avoids locking the
-  // owner out of their own site on a fresh install.
-  if (!secret) {
+  // reCAPTCHA is an OPT-IN feature. If either key is missing, it is off and
+  // authentication proceeds without requiring a token.
+  if (!siteKey || !secret) {
     return true;
   }
 

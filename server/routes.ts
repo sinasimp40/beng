@@ -1810,7 +1810,8 @@ export async function registerRoutes(
       res.json({ 
         siteKeyConfigured: !!siteKey,
         secretKeyConfigured: !!secretKey,
-        siteKey 
+        siteKey: siteKey && secretKey ? siteKey : "",
+        enabled: !!siteKey && !!secretKey,
       });
     } catch (error) {
       console.error("Error fetching reCAPTCHA settings:", error);

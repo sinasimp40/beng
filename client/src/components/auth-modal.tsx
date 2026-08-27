@@ -87,12 +87,11 @@ export function AuthModal({ open, onOpenChange, defaultMode = "login" }: AuthMod
         return res.json();
       })
       .then(data => {
-        if (data.siteKey) {
-          setRecaptchaSiteKey(data.siteKey);
-        }
+        setRecaptchaSiteKey(data.siteKey || "");
+        setRecaptchaToken("");
       })
       .catch(() => {});
-  }, []);
+  }, [open]);
 
   // Load reCAPTCHA script
   useEffect(() => {
