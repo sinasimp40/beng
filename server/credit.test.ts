@@ -242,6 +242,77 @@ describe("account credit integrity", () => {
     assert.ok(event.sentAt);
   });
 
+  it("marks exhausted Telegram alerts and atomically resets one retry without changing credit", async () => {
+    const user = await createUser();
+    const { topup } = await creditStorage.createTopup({
+      userId: user.id,
+      userEmail: user.email,
+      amountCents: 900,
+      payCurrency: "btc",
+      idempotencyKey: `topup-create-${randomUUID()}`,
+    });
+    topupIds.add(topup.id);
+    await creditStorage.attachTopupPayment(topup.id, {
+      paymentId: `credit-test-payment-${randomUUID()}`,
+      gatewayStatus: "waiting",
+    });
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const [claim] = (await creditStorage.claimPendingTelegramEvents())
+        .filter(event => event.topupId === topup.id);
+      assert.ok(claim?.deliveryLeaseId);
+      await creditStorage.failTelegramEvent(
+        claim.id,
+        claim.deliveryLeaseId,
+        `Telegram failure ${attempt}`,
+      );
+    }
+
+    const [exhausted] = await db.select().from(creditTelegramEvents)
+      .where(eq(creditTelegramEvents.id, (await creditStorage.getExhaustedTelegramEvents())
+        .find(event => event.topupId === topup.id)!.id));
+    assert.equal(exhausted.deliveryStatus, "exhausted");
+    assert.equal(exhausted.deliveryAttempts, 5);
+    assert.equal(exhausted.deliveryLastError, "Telegram failure 5");
+
+    const retries = await Promise.all([
+      creditStorage.retryExhaustedTelegramEvent(exhausted.id),
+      creditStorage.retryExhaustedTelegramEvent(exhausted.id),
+    ]);
+    assert.equal(retries.filter(Boolean).length, 1);
+
+    const [reset] = await db.select().from(creditTelegramEvents)
+      .where(eq(creditTelegramEvents.id, exhausted.id));
+    const [unchangedUser] = await db.select().from(users).where(eq(users.id, user.id));
+    const ledger = await db.select().from(creditTransactions)
+      .where(eq(creditTransactions.userId, user.id));
+    assert.equal(reset.deliveryStatus, "pending");
+    assert.equal(reset.deliveryAttempts, 0);
+    assert.equal(reset.deliveryLastError, null);
+    assert.equal(unchangedUser.creditBalanceCents, 0);
+    assert.equal(ledger.length, 0);
+
+    await db.update(creditTelegramEvents).set({
+      deliveryStatus: "pending",
+      deliveryAttempts: 4,
+    }).where(eq(creditTelegramEvents.id, exhausted.id));
+    const staleFinalClaim = (await creditStorage.claimPendingTelegramEvents())
+      .find(event => event.id === exhausted.id);
+    assert.ok(staleFinalClaim?.deliveryLeaseId);
+    await db.update(creditTelegramEvents).set({
+      deliveryAttemptedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+    }).where(eq(creditTelegramEvents.id, exhausted.id));
+
+    const staleExhausted = (await creditStorage.getExhaustedTelegramEvents())
+      .find(event => event.id === exhausted.id);
+    assert.equal(staleExhausted?.deliveryStatus, "exhausted");
+    assert.equal(
+      staleExhausted?.deliveryLastError,
+      "Telegram delivery attempt timed out before completion",
+    );
+    assert.ok(await creditStorage.retryExhaustedTelegramEvent(exhausted.id));
+  });
+
   it("allows only one concurrent purchase when the balance covers one", async () => {
     const user = await createUser(100);
     const product = await createProduct(1, ["credential-a", "credential-b"]);

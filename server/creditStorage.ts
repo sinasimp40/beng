@@ -805,7 +805,7 @@ export class CreditStorage {
 
   async failTelegramEvent(id: string, leaseId: string, error: string): Promise<void> {
     await db.update(creditTelegramEvents).set({
-      deliveryStatus: "failed",
+      deliveryStatus: sql`CASE WHEN ${creditTelegramEvents.deliveryAttempts} >= ${MAX_NOTIFICATION_ATTEMPTS} THEN 'exhausted' ELSE 'failed' END`,
       deliveryLastError: error.slice(0, 1000),
       deliveryLeaseId: null,
     }).where(and(
@@ -813,6 +813,48 @@ export class CreditStorage {
       eq(creditTelegramEvents.deliveryStatus, "sending"),
       eq(creditTelegramEvents.deliveryLeaseId, leaseId),
     ));
+  }
+
+  private async exhaustStaleFinalTelegramAttempt(id?: string): Promise<void> {
+    const staleBefore = new Date(Date.now() - NOTIFICATION_LEASE_MS).toISOString();
+    await db.update(creditTelegramEvents).set({
+      deliveryStatus: "exhausted",
+      deliveryLastError: "Telegram delivery attempt timed out before completion",
+      deliveryLeaseId: null,
+    }).where(and(
+      ...(id ? [eq(creditTelegramEvents.id, id)] : []),
+      eq(creditTelegramEvents.deliveryStatus, "sending"),
+      gte(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
+      isNotNull(creditTelegramEvents.deliveryAttemptedAt),
+      lte(creditTelegramEvents.deliveryAttemptedAt, staleBefore),
+    ));
+  }
+
+  async getExhaustedTelegramEvents(): Promise<CreditTelegramEvent[]> {
+    await this.exhaustStaleFinalTelegramAttempt();
+    return db.select().from(creditTelegramEvents)
+      .where(and(
+        gte(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
+        inArray(creditTelegramEvents.deliveryStatus, ["failed", "exhausted"]),
+      ))
+      .orderBy(desc(creditTelegramEvents.deliveryAttemptedAt), desc(creditTelegramEvents.createdAt));
+  }
+
+  async retryExhaustedTelegramEvent(id: string): Promise<CreditTelegramEvent | undefined> {
+    await this.exhaustStaleFinalTelegramAttempt(id);
+    const [event] = await db.update(creditTelegramEvents).set({
+      deliveryStatus: "pending",
+      deliveryAttempts: 0,
+      deliveryLeaseId: null,
+      deliveryAttemptedAt: null,
+      deliveryLastError: null,
+      sentAt: null,
+    }).where(and(
+      eq(creditTelegramEvents.id, id),
+      gte(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
+      inArray(creditTelegramEvents.deliveryStatus, ["failed", "exhausted"]),
+    )).returning();
+    return event;
   }
 }
 
