@@ -2149,6 +2149,11 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors[0]?.message || "Invalid top-up" });
       }
+      if (/minimum|minimal/i.test(error?.message || "")) {
+        return res.status(400).json({
+          error: `This payment provider requires a larger minimum for ${String(req.body.payCurrency || "").toUpperCase()}. Please try a larger amount.`,
+        });
+      }
       console.error("Error creating credit top-up:", error);
       res.status(500).json({ error: error?.message || "Failed to create credit top-up" });
     }

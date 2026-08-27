@@ -23,6 +23,7 @@ export function CreditTopup() {
   const [topup, setTopup] = useState<Topup | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const idempotencyKeyRef = useRef<string | null>(null);
+  const requestFingerprintRef = useRef<string | null>(null);
   const payment = topup?.payment;
   const status = String(payment?.payment_status || topup?.status || "waiting");
   const terminal = ["finished", "completed", "failed", "expired", "refunded"].includes(status);
@@ -52,14 +53,26 @@ export function CreditTopup() {
     }
     setSubmitting(true);
     try {
-      const idempotencyKey = idempotencyKeyRef.current ||= crypto.randomUUID();
+      const requestFingerprint = `${Math.round(dollars * 100)}:${currency.toLowerCase()}`;
+      if (requestFingerprintRef.current !== requestFingerprint) {
+        requestFingerprintRef.current = requestFingerprint;
+        idempotencyKeyRef.current = crypto.randomUUID();
+      }
+      const idempotencyKey = idempotencyKeyRef.current!;
       const res = await apiRequest("POST", "/api/credit/topups", { amountCents: Math.round(dollars * 100), payCurrency: currency }, { "X-Idempotency-Key": idempotencyKey });
       const data = await res.json();
       setTopup({ ...data.topup, payment: data.payment });
-    } catch (e) { toast({ title: "Top-up could not be created", description: (e as Error).message, variant: "destructive" }); }
+    } catch (e) {
+      const message = (e as Error).message;
+      toast({
+        title: /minimum|minimal/i.test(message) ? "Amount is below the crypto minimum" : "Top-up could not be created",
+        description: message,
+        variant: "destructive",
+      });
+    }
     finally { setSubmitting(false); }
   };
-  const reset = () => { idempotencyKeyRef.current = null; setTopup(null); };
+  const reset = () => { idempotencyKeyRef.current = null; requestFingerprintRef.current = null; setTopup(null); };
   const copy = (value: string) => { navigator.clipboard.writeText(value); toast({ title: "Copied to clipboard" }); };
   const label = status === "finished" || status === "completed" ? "Credit added" : status === "refunded" ? "Payment refunded" : status === "failed" ? "Payment failed" : status === "expired" ? "Payment expired" : status === "confirming" ? "Confirming payment" : "Waiting for payment";
 
