@@ -43,6 +43,9 @@ export default function Home() {
 
   const { data: products = [], isLoading: productsLoading } = useQuery<ProductWithVariants[]>({
     queryKey: ["/api/products"],
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
   });
 
   useEffect(() => {

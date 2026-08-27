@@ -1,12 +1,11 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Product } from "@shared/schema";
 
 type ProductEventType = "product_created" | "product_updated" | "product_deleted" | "settings_updated";
 
 interface ProductUpdateMessage {
   type: ProductEventType;
-  product: Product;
+  product: { id: string };
 }
 
 interface SettingsUpdateMessage {
@@ -40,26 +39,17 @@ export function useProductUpdates() {
       }
       
       const productData = data as ProductUpdateMessage;
-      
-      if (productData.type === "product_created") {
-        queryClient.setQueryData<Product[]>(["/api/products"], (old) => {
-          if (!old) return [productData.product];
-          const exists = old.some(p => p.id === productData.product.id);
-          if (exists) return old;
-          return [...old, productData.product];
-        });
-      } else if (productData.type === "product_updated") {
-        queryClient.setQueryData<Product[]>(["/api/products"], (old) => {
-          if (!old) return old;
-          return old.map(p => p.id === productData.product.id ? productData.product : p);
-        });
-        queryClient.setQueryData<Product>(["/api/products", productData.product.id], productData.product);
-      } else if (productData.type === "product_deleted") {
-        queryClient.setQueryData<Product[]>(["/api/products"], (old) => {
-          if (!old) return old;
-          return old.filter(p => p.id !== productData.product.id);
-        });
-        queryClient.removeQueries({ queryKey: ["/api/products", productData.product.id] });
+      if (
+        productData.type === "product_created" ||
+        productData.type === "product_updated" ||
+        productData.type === "product_deleted"
+      ) {
+        // The public endpoint applies enabled and parent/variant rules. Refetch
+        // instead of mutating the cached array so those rules remain canonical.
+        queryClient.invalidateQueries({ queryKey: ["/api/products"], exact: true });
+        if (productData.product?.id) {
+          queryClient.invalidateQueries({ queryKey: ["/api/products", productData.product.id] });
+        }
       }
     } catch (e) {
       console.error("Error parsing product update:", e);
@@ -78,6 +68,9 @@ export function useProductUpdates() {
       
       ws.onopen = () => {
         reconnectAttempts.current = 0;
+        // Events may have been missed while disconnected or while the tab was
+        // suspended, so reconcile immediately with the server.
+        queryClient.invalidateQueries({ queryKey: ["/api/products"], exact: true });
       };
       
       ws.onmessage = handleMessage;
@@ -100,7 +93,7 @@ export function useProductUpdates() {
     } catch (e) {
       console.error("WebSocket connection error:", e);
     }
-  }, [handleMessage]);
+  }, [handleMessage, queryClient]);
 
   useEffect(() => {
     connect();
