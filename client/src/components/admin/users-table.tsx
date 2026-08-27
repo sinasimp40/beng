@@ -65,7 +65,10 @@ export function UsersTable() {
     queryKey: ["/api/admin/users", selectedUser, "orders"],
     queryFn: async () => {
       if (!selectedUser) return [];
-      const res = await fetch(`/api/admin/users/${encodeURIComponent(selectedUser)}/orders`);
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(selectedUser)}/orders`, {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+      });
       if (!res.ok) {
         const text = await res.text();
         const { parseErrorMessage } = await import("@/lib/queryClient");
