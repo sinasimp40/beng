@@ -1,0 +1,99 @@
+root@srv1128711:/var/www/beng# cd /var/www/beng
+node --env-file=.env --import tsx scripts/list-admins.ts
+DrizzleQueryError: Failed query: select "id", "email", "password", "role", "banned", "credit_balance_cents", "created_at" from "users"
+params: 
+    at NodePgPreparedQuery.queryWithCache (/var/www/beng/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async <anonymous> (/var/www/beng/node_modules/src/node-postgres/session.ts:154:19)
+    at async DatabaseStorage.getAllUsers (/var/www/beng/server/storage.ts:135:12)
+    at async main (/var/www/beng/scripts/list-admins.ts:4:17) {
+  query: 'select "id", "email", "password", "role", "banned", "credit_balance_cents", "created_at" from "users"',
+  params: [],
+  cause: error: column "credit_balance_cents" does not exist
+      at /var/www/beng/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+      at async <anonymous> (/var/www/beng/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/var/www/beng/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/var/www/beng/node_modules/src/node-postgres/session.ts:154:19)
+      at async DatabaseStorage.getAllUsers (/var/www/beng/server/storage.ts:135:12)
+      at async main (/var/www/beng/scripts/list-admins.ts:4:17) {
+    length: 120,
+    severity: 'ERROR',
+    code: '42703',
+    detail: undefined,
+    hint: undefined,
+    position: '53',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '3722',
+    routine: 'errorMissingColumn'
+  }
+}
+root@srv1128711:/var/www/beng# cd /var/www/beng
+
+set -a
+. ./.env
+set +a
+
+npm run db:push
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/var/www/beng/drizzle.config.ts'
+Using 'pg' driver for database querying
+[✓] Pulling schema from database...
+· You're about to add orders_order_id_unique unique constraint to the table, which contains 89 items. If this statement fails, you will receive an error from the database. Do you want to truncate orders table?
+
+error: there is no unique constraint matching given keys for referenced table "orders"
+    at /var/www/beng/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async Object.query (/var/www/beng/node_modules/drizzle-kit/bin.cjs:78906:26)
+    at async pgPush (/var/www/beng/node_modules/drizzle-kit/bin.cjs:82768:13)
+    at async Object.handler (/var/www/beng/node_modules/drizzle-kit/bin.cjs:92226:9)
+    at async run (/var/www/beng/node_modules/drizzle-kit/bin.cjs:91472:7) {
+  length: 152,
+  severity: 'ERROR',
+  code: '42830',
+  detail: undefined,
+  hint: undefined,
+  position: undefined,
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'tablecmds.c',
+  line: '11804',
+  routine: 'transformFkeyCheckAttrs'
+}
+root@srv1128711:/var/www/beng# pm2 restart beng --update-env
+[PM2] Applying action restartProcessId on app [beng](ids: [ 2 ])
+[PM2] [beng](2) ✓
+┌────┬───────────────────────┬─────────────┬─────────┬─────────┬──────────┬────────┬──────┬───────────┬──────────┬──────────┬──────────┬──────────┐
+│ id │ name                  │ namespace   │ version │ mode    │ pid      │ uptime │ ↺    │ status    │ cpu      │ mem      │ user     │ watching │
+├────┼───────────────────────┼─────────────┼─────────┼─────────┼──────────┼────────┼──────┼───────────┼──────────┼──────────┼──────────┼──────────┤
+│ 2  │ beng                  │ default     │ N/A     │ cluster │ 1017334  │ 0s     │ 2    │ online    │ 0%       │ 40.9mb   │ root     │ disabled │
+│ 1  │ graphicsdesign-app    │ default     │ 1.0.0   │ fork    │ 1016758  │ 21m    │ 4    │ online    │ 0%       │ 82.5mb   │ root     │ disabled │
+│ 0  │ pastebank             │ default     │ 1.0.0   │ fork    │ 1016752  │ 21m    │ 4    │ online    │ 0%       │ 115.7mb  │ root     │ disabled │
+└────┴───────────────────────┴─────────────┴─────────┴─────────┴──────────┴────────┴──────┴───────────┴──────────┴──────────┴──────────┴──────────┘
+root@srv1128711:/var/www/beng# cd /var/www/beng
+node --env-file=.env --import tsx scripts/list-admins.ts
+
+Found 1 admin account(s):
+
+  id:        a8018438-667d-4e33-88e9-cef92fb337b3
+  email:     admin@buybit.cloud
+  banned:    no
+  createdAt: 2026-02-23 11:54:12.41793+00
