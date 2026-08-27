@@ -1,4 +1,4 @@
-import type { BackupProgress, Order } from "@shared/schema";
+import type { BackupProgress, CreditTelegramEvent, Order } from "@shared/schema";
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
 
@@ -66,6 +66,56 @@ export async function sendOrderNotification(
     return { success: true, message: 'Order notification sent' };
   } catch (error) {
     console.error('Telegram order notification error:', error);
+    return { success: false, message: `Error: ${(error as Error).message}` };
+  }
+}
+
+export async function sendCreditTopupNotification(
+  botToken: string,
+  channelId: string,
+  event: CreditTelegramEvent,
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const statusLabels: Record<string, { emoji: string; label: string }> = {
+      pending: { emoji: "⏳", label: "PAYMENT CREATED" },
+      confirming: { emoji: "🔄", label: "CONFIRMING" },
+      partially_paid: { emoji: "⚠️", label: "PARTIALLY PAID" },
+      completed: { emoji: "✅", label: "COMPLETED" },
+      failed: { emoji: "❌", label: "FAILED" },
+      expired: { emoji: "⌛", label: "EXPIRED" },
+      refunded: { emoji: "↩️", label: "REFUNDED" },
+    };
+    const status = statusLabels[event.eventStatus] || {
+      emoji: "ℹ️",
+      label: event.eventStatus.replaceAll("_", " ").toUpperCase(),
+    };
+    const message = [
+      `${status.emoji} CREDIT TOP-UP ${status.label}`,
+      "━━━━━━━━━━━━━━━━━━━━━",
+      `Top-up ID: ${event.topupId}`,
+      `Customer: ${event.userEmail}`,
+      `Amount: $${(event.amountCents / 100).toFixed(2)}`,
+      `Currency: ${event.payCurrency.toUpperCase()}`,
+      event.paymentId ? `Payment ID: ${event.paymentId}` : null,
+      event.gatewayStatus ? `Gateway status: ${event.gatewayStatus}` : null,
+      "━━━━━━━━━━━━━━━━━━━━━",
+      new Date().toISOString(),
+    ].filter(Boolean).join("\n");
+
+    const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: channelId, text: message }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const data = await response.json() as TelegramResponse;
+    if (!data.ok) {
+      console.error("Telegram credit notification failed:", data.description);
+      return { success: false, message: `Failed: ${data.description}` };
+    }
+    return { success: true, message: "Credit top-up notification sent" };
+  } catch (error) {
+    console.error("Telegram credit notification error:", error);
     return { success: false, message: `Error: ${(error as Error).message}` };
   }
 }

@@ -14,3 +14,9 @@ NOWPayments minimums must be fetched dynamically for the same source/target cryp
 **Why:** Hardcoded USD thresholds become stale, and assuming the wrong response field silently makes every currency minimum unknown.
 
 **How to apply:** Cache live minimums briefly, treat unknown currencies as available rather than guessing, enforce known minimums again on the server before creating an order/top-up, and disable known-ineligible choices in the UI.
+
+External credit notifications use a transactional outbox with canonical provider statuses and at-least-once delivery; they must never share completion state with email or financial mutations.
+
+**Why:** Polling and callbacks can observe the same transition concurrently, while a network timeout can make Telegram acceptance unknowable. Exactly-once external messaging is not available, but duplicate observations and ordinary stalled sends can be controlled.
+
+**How to apply:** Insert one event per top-up/status in the same transaction as the state change, use leased retry workers with request timeouts shorter than the lease, and require the current lease token to acknowledge delivery.

@@ -411,6 +411,27 @@ export const creditTopups = pgTable("credit_topups", {
   updatedAt: text("updated_at").notNull().default(sql`now()`),
 });
 
+// Durable Telegram outbox for top-up lifecycle events. eventKey prevents
+// duplicate polling, callback, or idempotent request paths from duplicating alerts.
+export const creditTelegramEvents = pgTable("credit_telegram_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventKey: text("event_key").notNull().unique(),
+  topupId: varchar("topup_id").notNull(),
+  userEmail: text("user_email").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  payCurrency: text("pay_currency").notNull(),
+  paymentId: text("payment_id"),
+  eventStatus: text("event_status").notNull(),
+  gatewayStatus: text("gateway_status"),
+  deliveryStatus: text("delivery_status").notNull().default("pending"),
+  deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+  deliveryLeaseId: text("delivery_lease_id"),
+  deliveryAttemptedAt: text("delivery_attempted_at"),
+  deliveryLastError: text("delivery_last_error"),
+  sentAt: text("sent_at"),
+  createdAt: text("created_at").notNull().default(sql`now()`),
+});
+
 export const insertCreditTransactionSchema = createInsertSchema(creditTransactions).omit({
   id: true,
 });
@@ -422,6 +443,7 @@ export type CreditTransaction = typeof creditTransactions.$inferSelect;
 export type InsertCreditTransaction = z.infer<typeof insertCreditTransactionSchema>;
 export type CreditTopup = typeof creditTopups.$inferSelect;
 export type InsertCreditTopup = z.infer<typeof insertCreditTopupSchema>;
+export type CreditTelegramEvent = typeof creditTelegramEvents.$inferSelect;
 
 export const insertEmailTemplateSchema = createInsertSchema(emailTemplates).omit({
   id: true,

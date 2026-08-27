@@ -2,12 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import {
   creditTopups,
+  creditTelegramEvents,
   creditTransactions,
   orderItems,
   orders,
   products,
   users,
   type CreditTopup,
+  type CreditTelegramEvent,
   type CreditTransaction,
   type Order,
   type User,
@@ -17,6 +19,54 @@ import { InsufficientStockError } from "./storage";
 
 const NOTIFICATION_LEASE_MS = 5 * 60 * 1000;
 const MAX_NOTIFICATION_ATTEMPTS = 5;
+const SUPPORTED_TOPUP_GATEWAY_STATUSES = new Set([
+  "waiting",
+  "confirming",
+  "confirmed",
+  "sending",
+  "partially_paid",
+  "finished",
+  "failed",
+  "expired",
+  "refunded",
+]);
+
+function normalizeTopupTelegramStatus(status: string | null | undefined): string {
+  switch ((status || "").toLowerCase()) {
+    case "finished":
+    case "completed":
+      return "completed";
+    case "confirming":
+    case "confirmed":
+    case "sending":
+      return "confirming";
+    case "waiting":
+    case "creating":
+    case "pending":
+      return "pending";
+    case "partially_paid":
+      return "partially_paid";
+    case "failed":
+    case "expired":
+    case "refunded":
+      return status!.toLowerCase();
+    default:
+      return (status || "pending").toLowerCase();
+  }
+}
+
+function telegramEventValues(topup: CreditTopup, eventStatus: string, gatewayStatus?: string | null) {
+  return {
+    eventKey: `topup:${topup.id}:${eventStatus}`,
+    topupId: topup.id,
+    userEmail: topup.userEmail,
+    amountCents: topup.amountCents,
+    payCurrency: topup.payCurrency,
+    paymentId: topup.paymentId,
+    eventStatus,
+    gatewayStatus: gatewayStatus || topup.gatewayStatus,
+  };
+}
 
 export class InsufficientCreditError extends Error {
   constructor(
@@ -161,26 +211,40 @@ export class CreditStorage {
     payAmount?: number | null;
     gatewayStatus?: string | null;
   }): Promise<CreditTopup | undefined> {
-    const [topup] = await db.update(creditTopups).set({
-      paymentId: payment.paymentId,
-      payAddress: payment.payAddress,
-      payAmount: payment.payAmount,
-      gatewayStatus: payment.gatewayStatus || "waiting",
-      status: "pending",
-      updatedAt: new Date().toISOString(),
-    }).where(and(
-      eq(creditTopups.id, topupId),
-      eq(creditTopups.status, "creating"),
-    )).returning();
-    return topup;
+    return db.transaction(async tx => {
+      const [topup] = await tx.update(creditTopups).set({
+        paymentId: payment.paymentId,
+        payAddress: payment.payAddress,
+        payAmount: payment.payAmount,
+        gatewayStatus: payment.gatewayStatus || "waiting",
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+      }).where(and(
+        eq(creditTopups.id, topupId),
+        eq(creditTopups.status, "creating"),
+      )).returning();
+      if (topup) {
+        await tx.insert(creditTelegramEvents)
+          .values(telegramEventValues(topup, "pending", payment.gatewayStatus))
+          .onConflictDoNothing({ target: creditTelegramEvents.eventKey });
+      }
+      return topup;
+    });
   }
 
   async failTopupCreation(topupId: string, message: string): Promise<void> {
-    await db.update(creditTopups).set({
-      status: "failed",
-      gatewayStatus: message.slice(0, 250),
-      updatedAt: new Date().toISOString(),
-    }).where(eq(creditTopups.id, topupId));
+    await db.transaction(async tx => {
+      const [topup] = await tx.update(creditTopups).set({
+        status: "failed",
+        gatewayStatus: message.slice(0, 250),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(creditTopups.id, topupId)).returning();
+      if (topup) {
+        await tx.insert(creditTelegramEvents)
+          .values(telegramEventValues(topup, "failed", topup.gatewayStatus))
+          .onConflictDoNothing({ target: creditTelegramEvents.eventKey });
+      }
+    });
   }
 
   async getTopup(topupId: string): Promise<CreditTopup | undefined> {
@@ -228,6 +292,10 @@ export class CreditStorage {
       const [topup] = await tx.select().from(creditTopups)
         .where(eq(creditTopups.id, topupId)).for("update");
       if (!topup) throw new CreditOperationError("Credit top-up not found", 404);
+      const gatewayStatus = gateway.status.trim().toLowerCase();
+      if (!SUPPORTED_TOPUP_GATEWAY_STATUSES.has(gatewayStatus)) {
+        throw new CreditOperationError(`Unsupported top-up gateway status: ${gateway.status}`, 400);
+      }
       if (!topup.paymentId || gateway.paymentId !== topup.paymentId) {
         throw new CreditOperationError("Top-up payment identity mismatch", 409);
       }
@@ -243,25 +311,35 @@ export class CreditStorage {
       if (gateway.payCurrency && gateway.payCurrency.toLowerCase() !== topup.payCurrency.toLowerCase()) {
         throw new CreditOperationError("Top-up payment currency mismatch", 409);
       }
+      const previousTelegramStatus = normalizeTopupTelegramStatus(topup.gatewayStatus || topup.status);
+      const nextTelegramStatus = normalizeTopupTelegramStatus(gatewayStatus);
+      const recordTelegramTransition = async (updatedTopup: CreditTopup) => {
+        if (nextTelegramStatus !== previousTelegramStatus) {
+          await tx.insert(creditTelegramEvents)
+            .values(telegramEventValues(updatedTopup, nextTelegramStatus, gatewayStatus))
+            .onConflictDoNothing({ target: creditTelegramEvents.eventKey });
+        }
+        return updatedTopup;
+      };
 
-      const terminalFailure = gateway.status === "failed" ||
-        gateway.status === "expired" ||
-        gateway.status === "refunded";
-      const completed = gateway.status === "finished";
+      const terminalFailure = gatewayStatus === "failed" ||
+        gatewayStatus === "expired" ||
+        gatewayStatus === "refunded";
+      const completed = gatewayStatus === "finished";
 
       if (topup.status === "completed") {
-        if (gateway.status !== "refunded") {
+        if (gatewayStatus !== "refunded") {
           const [transaction] = topup.transactionId
             ? await tx.select().from(creditTransactions)
                 .where(eq(creditTransactions.id, topup.transactionId))
             : [];
           const [user] = await tx.select().from(users).where(eq(users.id, topup.userId));
           const [reconciledTopup] = await tx.update(creditTopups).set({
-            gatewayStatus: gateway.status,
+            gatewayStatus,
             lastReconciledAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           }).where(eq(creditTopups.id, topup.id)).returning();
-          return { topup: reconciledTopup, transaction, user };
+          return { topup: await recordTelegramTransition(reconciledTopup), transaction, user };
         }
 
         const reversalKey = `topup-refund:${topup.id}`;
@@ -271,11 +349,11 @@ export class CreditStorage {
           const [user] = await tx.select().from(users).where(eq(users.id, topup.userId));
           const [updatedTopup] = await tx.update(creditTopups).set({
             status: "refunded",
-            gatewayStatus: gateway.status,
+            gatewayStatus,
             lastReconciledAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           }).where(eq(creditTopups.id, topup.id)).returning();
-          return { topup: updatedTopup, transaction: existingReversal, user };
+          return { topup: await recordTelegramTransition(updatedTopup), transaction: existingReversal, user };
         }
 
         const [lockedUser] = await tx.select().from(users)
@@ -301,11 +379,11 @@ export class CreditStorage {
         }).returning();
         const [updatedTopup] = await tx.update(creditTopups).set({
           status: "refunded",
-          gatewayStatus: gateway.status,
+          gatewayStatus,
           lastReconciledAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }).where(eq(creditTopups.id, topup.id)).returning();
-        return { topup: updatedTopup, transaction: reversal, user };
+        return { topup: await recordTelegramTransition(updatedTopup), transaction: reversal, user };
       }
 
       if (["failed", "expired", "refunded"].includes(topup.status)) {
@@ -314,12 +392,12 @@ export class CreditStorage {
 
       if (!completed) {
         const [updated] = await tx.update(creditTopups).set({
-          status: terminalFailure ? gateway.status : "pending",
-          gatewayStatus: gateway.status,
+          status: terminalFailure ? gatewayStatus : "pending",
+          gatewayStatus,
           lastReconciledAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }).where(eq(creditTopups.id, topup.id)).returning();
-        return { topup: updated };
+        return { topup: await recordTelegramTransition(updated) };
       }
 
       const [existingTransaction] = await tx.select().from(creditTransactions)
@@ -327,14 +405,14 @@ export class CreditStorage {
       if (existingTransaction) {
         const [updated] = await tx.update(creditTopups).set({
           status: "completed",
-          gatewayStatus: gateway.status,
+          gatewayStatus,
           transactionId: existingTransaction.id,
           completedAt: topup.completedAt || new Date().toISOString(),
           lastReconciledAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }).where(eq(creditTopups.id, topup.id)).returning();
         const [user] = await tx.select().from(users).where(eq(users.id, topup.userId));
-        return { topup: updated, transaction: existingTransaction, user };
+        return { topup: await recordTelegramTransition(updated), transaction: existingTransaction, user };
       }
 
       const [lockedUser] = await tx.select().from(users)
@@ -362,13 +440,13 @@ export class CreditStorage {
       const now = new Date().toISOString();
       const [updatedTopup] = await tx.update(creditTopups).set({
         status: "completed",
-        gatewayStatus: gateway.status,
+        gatewayStatus,
         transactionId: transaction.id,
         completedAt: now,
         lastReconciledAt: now,
         updatedAt: now,
       }).where(eq(creditTopups.id, topup.id)).returning();
-      return { topup: updatedTopup, transaction, user };
+      return { topup: await recordTelegramTransition(updatedTopup), transaction, user };
     });
   }
 
@@ -681,6 +759,59 @@ export class CreditStorage {
       eq(creditTransactions.id, id),
       eq(creditTransactions.notificationStatus, "sending"),
       eq(creditTransactions.notificationLeaseId, leaseId),
+    ));
+  }
+
+  async claimPendingTelegramEvents(limit = 20): Promise<CreditTelegramEvent[]> {
+    const staleBefore = new Date(Date.now() - NOTIFICATION_LEASE_MS).toISOString();
+    return db.transaction(async tx => {
+      const candidates = await tx.select().from(creditTelegramEvents).where(and(
+        lt(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
+        or(
+          inArray(creditTelegramEvents.deliveryStatus, ["pending", "failed"]),
+          and(
+            eq(creditTelegramEvents.deliveryStatus, "sending"),
+            isNotNull(creditTelegramEvents.deliveryAttemptedAt),
+            lte(creditTelegramEvents.deliveryAttemptedAt, staleBefore),
+          ),
+        ),
+      )).orderBy(asc(creditTelegramEvents.createdAt)).limit(limit).for("update", { skipLocked: true });
+      if (candidates.length === 0) return [];
+
+      const ids = candidates.map(item => item.id);
+      const leaseId = randomUUID();
+      return tx.update(creditTelegramEvents).set({
+        deliveryStatus: "sending",
+        deliveryAttempts: sql`${creditTelegramEvents.deliveryAttempts} + 1`,
+        deliveryAttemptedAt: new Date().toISOString(),
+        deliveryLastError: null,
+        deliveryLeaseId: leaseId,
+      }).where(inArray(creditTelegramEvents.id, ids)).returning();
+    });
+  }
+
+  async completeTelegramEvent(id: string, leaseId: string): Promise<void> {
+    await db.update(creditTelegramEvents).set({
+      deliveryStatus: "sent",
+      sentAt: new Date().toISOString(),
+      deliveryLastError: null,
+      deliveryLeaseId: null,
+    }).where(and(
+      eq(creditTelegramEvents.id, id),
+      eq(creditTelegramEvents.deliveryStatus, "sending"),
+      eq(creditTelegramEvents.deliveryLeaseId, leaseId),
+    ));
+  }
+
+  async failTelegramEvent(id: string, leaseId: string, error: string): Promise<void> {
+    await db.update(creditTelegramEvents).set({
+      deliveryStatus: "failed",
+      deliveryLastError: error.slice(0, 1000),
+      deliveryLeaseId: null,
+    }).where(and(
+      eq(creditTelegramEvents.id, id),
+      eq(creditTelegramEvents.deliveryStatus, "sending"),
+      eq(creditTelegramEvents.deliveryLeaseId, leaseId),
     ));
   }
 }

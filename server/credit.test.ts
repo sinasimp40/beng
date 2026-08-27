@@ -7,6 +7,7 @@ import { creditStorage, InsufficientCreditError } from "./creditStorage";
 import { importDatabase } from "./services/databaseBackupService";
 import {
   creditTopups,
+  creditTelegramEvents,
   creditTransactions,
   orderItems,
   orders,
@@ -63,6 +64,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (userIds.size > 0) {
+    await db.delete(creditTelegramEvents).where(inArray(creditTelegramEvents.userEmail, Array.from(userIds).map(id => `${id}@example.com`)));
     await db.delete(creditTransactions).where(inArray(creditTransactions.userId, Array.from(userIds)));
     await db.delete(creditTopups).where(inArray(creditTopups.userId, Array.from(userIds)));
   }
@@ -121,6 +123,123 @@ describe("account credit integrity", () => {
     assert.equal(updatedUser[0].creditBalanceCents, 500);
     assert.equal(ledger.length, 1);
     assert.equal(ledger[0].amountCents, 500);
+  });
+
+  it("queues each Telegram top-up status once across duplicate gateway observations", async () => {
+    const user = await createUser();
+    const { topup } = await creditStorage.createTopup({
+      userId: user.id,
+      userEmail: user.email,
+      amountCents: 900,
+      payCurrency: "eth",
+      idempotencyKey: `topup-create-${randomUUID()}`,
+    });
+    topupIds.add(topup.id);
+    const paymentId = `credit-test-payment-${randomUUID()}`;
+    await creditStorage.attachTopupPayment(topup.id, {
+      paymentId,
+      gatewayStatus: "waiting",
+    });
+
+    await Promise.all(Array.from({ length: 5 }, () =>
+      creditStorage.applyTopupGatewayStatus(topup.id, {
+        paymentId,
+        status: "confirming",
+        priceAmount: 9,
+        priceCurrency: "usd",
+        payCurrency: "eth",
+      }),
+    ));
+    await Promise.all(Array.from({ length: 5 }, () =>
+      creditStorage.applyTopupGatewayStatus(topup.id, {
+        paymentId,
+        status: "finished",
+        priceAmount: 9,
+        priceCurrency: "usd",
+        payCurrency: "eth",
+      }),
+    ));
+
+    const events = await db.select().from(creditTelegramEvents)
+      .where(eq(creditTelegramEvents.topupId, topup.id));
+    assert.deepEqual(
+      events.map(event => event.eventStatus).sort(),
+      ["completed", "confirming", "pending"],
+    );
+  });
+
+  it("canonicalizes provider status before crediting and rejects unknown states", async () => {
+    const user = await createUser();
+    const { topup } = await creditStorage.createTopup({
+      userId: user.id,
+      userEmail: user.email,
+      amountCents: 400,
+      payCurrency: "xrp",
+      idempotencyKey: `topup-create-${randomUUID()}`,
+    });
+    topupIds.add(topup.id);
+    const paymentId = `credit-test-payment-${randomUUID()}`;
+    await creditStorage.attachTopupPayment(topup.id, { paymentId, gatewayStatus: "waiting" });
+
+    await assert.rejects(
+      creditStorage.applyTopupGatewayStatus(topup.id, {
+        paymentId,
+        status: "unexpected_provider_state",
+        priceAmount: 4,
+        priceCurrency: "usd",
+        payCurrency: "xrp",
+      }),
+      /Unsupported top-up gateway status/,
+    );
+    await creditStorage.applyTopupGatewayStatus(topup.id, {
+      paymentId,
+      status: "FINISHED",
+      priceAmount: 4,
+      priceCurrency: "usd",
+      payCurrency: "xrp",
+    });
+
+    const [updatedUser] = await db.select().from(users).where(eq(users.id, user.id));
+    const [updatedTopup] = await db.select().from(creditTopups).where(eq(creditTopups.id, topup.id));
+    assert.equal(updatedUser.creditBalanceCents, 400);
+    assert.equal(updatedTopup.status, "completed");
+    assert.equal(updatedTopup.gatewayStatus, "finished");
+  });
+
+  it("retries Telegram top-up delivery with lease ownership", async () => {
+    const user = await createUser();
+    const { topup } = await creditStorage.createTopup({
+      userId: user.id,
+      userEmail: user.email,
+      amountCents: 700,
+      payCurrency: "ltc",
+      idempotencyKey: `topup-create-${randomUUID()}`,
+    });
+    topupIds.add(topup.id);
+    await creditStorage.attachTopupPayment(topup.id, {
+      paymentId: `credit-test-payment-${randomUUID()}`,
+      gatewayStatus: "waiting",
+    });
+
+    const firstClaim = (await creditStorage.claimPendingTelegramEvents())
+      .find(event => event.topupId === topup.id);
+    assert.ok(firstClaim?.deliveryLeaseId);
+    await creditStorage.failTelegramEvent(
+      firstClaim.id,
+      firstClaim.deliveryLeaseId,
+      "Temporary Telegram failure",
+    );
+    const secondClaim = (await creditStorage.claimPendingTelegramEvents())
+      .find(event => event.topupId === topup.id);
+    assert.ok(secondClaim?.deliveryLeaseId);
+    assert.notEqual(secondClaim.deliveryLeaseId, firstClaim.deliveryLeaseId);
+    await creditStorage.completeTelegramEvent(secondClaim.id, secondClaim.deliveryLeaseId);
+
+    const [event] = await db.select().from(creditTelegramEvents)
+      .where(eq(creditTelegramEvents.id, secondClaim.id));
+    assert.equal(event.deliveryStatus, "sent");
+    assert.equal(event.deliveryAttempts, 2);
+    assert.ok(event.sentAt);
   });
 
   it("allows only one concurrent purchase when the balance covers one", async () => {

@@ -10,7 +10,7 @@ import { emailService } from "./email";
 import { creditStorage, CreditOperationError, InsufficientCreditError } from "./creditStorage";
 import { verifyRecaptcha, hashPassword, verifyPassword, generateSessionToken, needsRehash } from "./auth";
 import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptToken, scheduleAutoBackup, initializeEncryption } from "./services/databaseBackupService";
-import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification } from "./services/telegramService";
+import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
 import type { Order } from "@shared/schema";
@@ -296,6 +296,41 @@ async function processCreditNotifications(): Promise<void> {
   }
 }
 
+async function processCreditTelegramNotifications(): Promise<void> {
+  let botToken: string;
+  let channelId: string;
+  try {
+    const encryptedToken = await storage.getSetting("telegram_bot_token");
+    const storedChannelId = await storage.getSetting("telegram_channel_id");
+    if (!encryptedToken || !storedChannelId) return;
+    botToken = decryptToken(encryptedToken);
+    channelId = storedChannelId;
+    if (!botToken) return;
+  } catch (error) {
+    console.error("Could not load Telegram settings for credit notifications:", error);
+    return;
+  }
+
+  const claimed = await creditStorage.claimPendingTelegramEvents();
+  for (const event of claimed) {
+    if (!event.deliveryLeaseId) continue;
+    try {
+      const result = await sendCreditTopupNotification(botToken, channelId, event);
+      if (result.success) {
+        await creditStorage.completeTelegramEvent(event.id, event.deliveryLeaseId);
+      } else {
+        await creditStorage.failTelegramEvent(event.id, event.deliveryLeaseId, result.message);
+      }
+    } catch (error: any) {
+      await creditStorage.failTelegramEvent(
+        event.id,
+        event.deliveryLeaseId,
+        error?.message || "Telegram delivery failed",
+      );
+    }
+  }
+}
+
 async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined> {
   if (processingOrders.has(orderId)) {
     return storage.getOrderByOrderId(orderId);
@@ -380,6 +415,7 @@ let orderPollingInterval: NodeJS.Timeout | null = null;
 async function pollPendingOrders() {
   try {
     await processCreditNotifications();
+    await processCreditTelegramNotifications();
     const allOrders = await storage.getAllOrders();
     const fulfillmentRetries = allOrders.filter(order =>
       (order.status === "fulfilling" || order.status === "fulfillment_failed") &&
@@ -415,6 +451,7 @@ async function pollPendingOrders() {
         console.error(`Credit top-up polling failed for ${topup.id}:`, error);
       }
     }
+    await processCreditTelegramNotifications();
 
     const pendingOrders = allOrders.filter(o => 
       (o.status === 'pending' || o.status === 'confirming') && o.paymentId
@@ -2176,12 +2213,18 @@ export async function registerRoutes(
           gatewayStatus: payment.payment_status,
         });
         if (!attached) throw new Error("Top-up payment could not be attached");
+        void processCreditTelegramNotifications().catch(error =>
+          console.error("Credit Telegram notification processing failed:", error),
+        );
         return res.status(201).json({
           topup: attached,
           payment: { ...payment, price_amount: input.amountCents / 100 },
         });
       } catch (error: any) {
         await creditStorage.failTopupCreation(topup.id, error?.message || "Payment creation failed");
+        void processCreditTelegramNotifications().catch(notificationError =>
+          console.error("Credit Telegram notification processing failed:", notificationError),
+        );
         throw error;
       }
     } catch (error: any) {
@@ -2217,6 +2260,9 @@ export async function registerRoutes(
             payCurrency: payment.pay_currency,
           });
           topup = result.topup;
+          void processCreditTelegramNotifications().catch(error =>
+            console.error("Credit Telegram notification processing failed:", error),
+          );
           if (result.transaction) {
             broadcastCreditUpdate(result.transaction);
             void processCreditNotifications().catch(error =>
@@ -2542,6 +2588,9 @@ export async function registerRoutes(
             priceCurrency: req.body.price_currency,
             payCurrency: req.body.pay_currency,
           });
+          void processCreditTelegramNotifications().catch(error =>
+            console.error("Credit Telegram notification processing failed:", error),
+          );
           if (result.transaction) {
             broadcastCreditUpdate(result.transaction);
             void processCreditNotifications().catch(error =>

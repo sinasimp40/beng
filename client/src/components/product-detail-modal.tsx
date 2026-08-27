@@ -172,6 +172,8 @@ export function ProductDetailModal({
                   return (
                     <button
                       key={option.id}
+                      type="button"
+                      disabled={outOfStock}
                       onClick={() => !outOfStock && handleVariantSelect(option.id)}
                       className={`relative flex flex-col items-center gap-0.5 px-2 py-2.5 rounded-lg text-center transition-all duration-200 ${
                         outOfStock

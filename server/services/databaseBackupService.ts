@@ -1,5 +1,5 @@
 import { db, pool } from "../db";
-import { users, products, orders, orderItems, creditTopups, creditTransactions, emailTemplates, settings, passwordResetTokens, reviews } from "@shared/schema";
+import { users, products, orders, orderItems, creditTopups, creditTransactions, creditTelegramEvents, emailTemplates, settings, passwordResetTokens, reviews } from "@shared/schema";
 import type { BackupProgress, DatabaseExport } from "@shared/schema";
 import { WebSocket } from "ws";
 import crypto from "crypto";
@@ -12,6 +12,7 @@ const TABLES = [
   { name: 'orderItems', table: orderItems },
   { name: 'creditTopups', table: creditTopups },
   { name: 'creditTransactions', table: creditTransactions },
+  { name: 'creditTelegramEvents', table: creditTelegramEvents },
   { name: 'emailTemplates', table: emailTemplates },
   { name: 'settings', table: settings },
   { name: 'passwordResetTokens', table: passwordResetTokens },

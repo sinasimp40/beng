@@ -76,6 +76,7 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
   const totalStock = hasVariants
     ? product.stock + product.variants!.reduce((sum, v) => sum + v.stock, 0)
     : product.stock;
+  const isOutOfStock = totalStock <= 0;
   const { display: animatedStock, counting: stockCounting } = useAnimatedCount(totalStock);
   const cardRef = useRef<HTMLDivElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
@@ -101,10 +102,10 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
   }, []);
 
   return (
-    <div className="group relative">
+    <div className={`group relative ${isOutOfStock ? "opacity-55" : ""}`}>
       <Card
         ref={cardRef}
-        className="relative overflow-hidden flex flex-col bg-gradient-to-b from-gray-50 to-gray-100 dark:from-[#0f0f0f] dark:to-[#080808] border border-gray-200/80 dark:border-white/[0.06] group-hover:border-primary/30 transition-all duration-300 shadow-lg shadow-black/10 dark:shadow-black/40"
+        className={`relative overflow-hidden flex flex-col bg-gradient-to-b from-gray-50 to-gray-100 dark:from-[#0f0f0f] dark:to-[#080808] border border-gray-200/80 dark:border-white/[0.06] transition-all duration-300 shadow-lg shadow-black/10 dark:shadow-black/40 ${isOutOfStock ? "grayscale" : "group-hover:border-primary/30"}`}
         data-testid={`card-product-${product.id}`}
       >
         <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] pointer-events-none" />
@@ -114,7 +115,7 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
             <img
               src={product.imageUrl!}
               alt={product.name}
-              className="w-full h-full object-cover transition-all duration-500 group-hover:scale-105 group-hover:brightness-110"
+              className={`w-full h-full object-cover transition-all duration-500 ${isOutOfStock ? "" : "group-hover:scale-105 group-hover:brightness-110"}`}
               loading="lazy"
             />
           ) : (
@@ -151,6 +152,13 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
                   HOT
                 </span>
               </div>
+            </div>
+          )}
+          {isOutOfStock && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+              <span className="rounded-md border border-white/20 bg-black/75 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-white shadow-lg">
+                Out of Stock
+              </span>
             </div>
           )}
         </div>
@@ -226,10 +234,10 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
               <div className="relative flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/[0.03] border border-gray-200 dark:border-white/[0.06]">
                 <div className="relative flex items-center justify-center w-2 h-2">
-                  <span className={`absolute inline-flex h-full w-full rounded-full opacity-50 transition-colors duration-300 ${stockCounting ? 'bg-red-400' : 'bg-green-400'}`} style={{ animation: 'stockPulse 2s ease-in-out infinite' }} />
-                  <span className={`relative inline-flex rounded-full h-1.5 w-1.5 transition-colors duration-300 ${stockCounting ? 'bg-red-500' : 'bg-green-500'}`} />
+                  <span className={`absolute inline-flex h-full w-full rounded-full opacity-50 transition-colors duration-300 ${isOutOfStock || stockCounting ? 'bg-red-400' : 'bg-green-400'}`} style={{ animation: 'stockPulse 2s ease-in-out infinite' }} />
+                  <span className={`relative inline-flex rounded-full h-1.5 w-1.5 transition-colors duration-300 ${isOutOfStock || stockCounting ? 'bg-red-500' : 'bg-green-500'}`} />
                 </div>
-                <span className="text-muted-foreground font-medium">{stockCounting ? 'Counting' : 'Stocked'}</span>
+                <span className={`font-medium ${isOutOfStock ? "text-red-500" : "text-muted-foreground"}`}>{isOutOfStock ? "Out of Stock" : stockCounting ? "Counting" : "Stocked"}</span>
                 <span className="font-medium tabular-nums" data-testid={`text-stock-${product.id}`}>
                   {animatedStock.toLocaleString()}
                 </span>
@@ -250,25 +258,29 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
             </span>
             <div className="flex items-center gap-1.5">
               <button
-                onClick={() => onAddToCart(product)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider text-primary border border-primary/30 bg-primary/5 hover:bg-primary/15 transition-colors"
+                type="button"
+                disabled={isOutOfStock}
+                onClick={() => !isOutOfStock && onAddToCart(product)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider text-primary border border-primary/30 bg-primary/5 hover:bg-primary/15 transition-colors disabled:cursor-not-allowed disabled:border-gray-300 disabled:bg-gray-100 disabled:text-gray-400 disabled:hover:bg-gray-100"
                 data-testid={`button-add-to-cart-${product.id}`}
               >
                 <ShoppingCart className="w-3 h-3" />
                 <span>Cart</span>
               </button>
               <button
-                onClick={() => onBuyNow(product)}
-                className="relative group/btn overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider text-white transition-all duration-300"
+                type="button"
+                disabled={isOutOfStock}
+                onClick={() => !isOutOfStock && onBuyNow(product)}
+                className="relative group/btn overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider text-white transition-all duration-300 disabled:cursor-not-allowed"
                 data-testid={`button-buy-${product.id}`}
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-primary via-primary/80 to-primary rounded-md" />
+                <div className={`absolute inset-0 rounded-md ${isOutOfStock ? "bg-gray-400 dark:bg-gray-700" : "bg-gradient-to-r from-primary via-primary/80 to-primary"}`} />
                 <div className="absolute inset-0 bg-gradient-to-r from-primary via-white/20 to-primary opacity-0 group-hover/btn:opacity-100 transition-opacity duration-500" />
                 <div
                   className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"
                 />
                 <div className="absolute inset-[1px] rounded-[5px] bg-gradient-to-b from-white/10 to-transparent pointer-events-none" />
-                <span className="relative">Buy</span>
+                <span className="relative">{isOutOfStock ? "Sold Out" : "Buy"}</span>
               </button>
             </div>
           </div>
