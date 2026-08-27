@@ -752,7 +752,7 @@ export class CreditStorage {
 
   async failNotification(id: string, leaseId: string, error: string): Promise<void> {
     await db.update(creditTransactions).set({
-      notificationStatus: "failed",
+      notificationStatus: sql`CASE WHEN ${creditTransactions.notificationAttempts} >= ${MAX_NOTIFICATION_ATTEMPTS} THEN 'exhausted' ELSE 'failed' END`,
       notificationLastError: error.slice(0, 1000),
       notificationLeaseId: null,
     }).where(and(
@@ -760,6 +760,48 @@ export class CreditStorage {
       eq(creditTransactions.notificationStatus, "sending"),
       eq(creditTransactions.notificationLeaseId, leaseId),
     ));
+  }
+
+  private async exhaustStaleFinalNotification(id?: string): Promise<void> {
+    const staleBefore = new Date(Date.now() - NOTIFICATION_LEASE_MS).toISOString();
+    await db.update(creditTransactions).set({
+      notificationStatus: "exhausted",
+      notificationLastError: "Email delivery attempt timed out before completion",
+      notificationLeaseId: null,
+    }).where(and(
+      ...(id ? [eq(creditTransactions.id, id)] : []),
+      eq(creditTransactions.notificationStatus, "sending"),
+      gte(creditTransactions.notificationAttempts, MAX_NOTIFICATION_ATTEMPTS),
+      isNotNull(creditTransactions.notificationAttemptedAt),
+      lte(creditTransactions.notificationAttemptedAt, staleBefore),
+    ));
+  }
+
+  async getExhaustedNotifications(): Promise<CreditTransaction[]> {
+    await this.exhaustStaleFinalNotification();
+    return db.select().from(creditTransactions)
+      .where(and(
+        gte(creditTransactions.notificationAttempts, MAX_NOTIFICATION_ATTEMPTS),
+        inArray(creditTransactions.notificationStatus, ["failed", "exhausted"]),
+      ))
+      .orderBy(desc(creditTransactions.notificationAttemptedAt), desc(creditTransactions.createdAt));
+  }
+
+  async retryExhaustedNotification(id: string): Promise<CreditTransaction | undefined> {
+    await this.exhaustStaleFinalNotification(id);
+    const [transaction] = await db.update(creditTransactions).set({
+      notificationStatus: "pending",
+      notificationAttempts: 0,
+      notificationLeaseId: null,
+      notificationAttemptedAt: null,
+      notificationLastError: null,
+      notifiedAt: null,
+    }).where(and(
+      eq(creditTransactions.id, id),
+      gte(creditTransactions.notificationAttempts, MAX_NOTIFICATION_ATTEMPTS),
+      inArray(creditTransactions.notificationStatus, ["failed", "exhausted"]),
+    )).returning();
+    return transaction;
   }
 
   async claimPendingTelegramEvents(limit = 20): Promise<CreditTelegramEvent[]> {

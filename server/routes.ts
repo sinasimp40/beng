@@ -2298,6 +2298,31 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/admin/credit-notifications", requireAdmin, async (_req, res) => {
+    try {
+      res.json(await creditStorage.getExhaustedNotifications());
+    } catch (error) {
+      console.error("Error fetching exhausted credit notifications:", error);
+      res.status(500).json({ error: "Failed to fetch exhausted credit emails" });
+    }
+  });
+
+  app.post("/api/admin/credit-notifications/:transactionId/retry", requireAdmin, async (req, res) => {
+    try {
+      const transaction = await creditStorage.retryExhaustedNotification(req.params.transactionId);
+      if (!transaction) {
+        return res.status(409).json({ error: "Credit email is no longer exhausted" });
+      }
+      void processCreditNotifications().catch(error =>
+        console.error("Credit notification processing failed:", error),
+      );
+      res.json(transaction);
+    } catch (error) {
+      console.error("Error retrying exhausted credit notification:", error);
+      res.status(500).json({ error: "Failed to retry credit email" });
+    }
+  });
+
   app.post("/api/admin/credit-telegram-events/:eventId/retry", requireAdmin, async (req, res) => {
     try {
       const event = await creditStorage.retryExhaustedTelegramEvent(req.params.eventId);

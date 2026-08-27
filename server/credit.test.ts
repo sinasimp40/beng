@@ -438,6 +438,80 @@ describe("account credit integrity", () => {
     assert.equal(ledger[0].notificationAttempts, 2);
   });
 
+  it("exposes and safely recovers exhausted credit emails without changing the ledger", async () => {
+    const user = await createUser();
+    const adjustment = await creditStorage.adjustCredit({
+      userId: user.id,
+      amountCents: 450,
+      reason: "Exhausted email test",
+      actorUserId: user.id,
+      actorEmail: user.email,
+      idempotencyKey: `adjustment-${randomUUID()}`,
+    });
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const claim = (await creditStorage.claimPendingNotifications())
+        .find(item => item.id === adjustment.transaction.id);
+      assert.ok(claim?.notificationLeaseId);
+      if (attempt === 5) {
+        assert.equal(await creditStorage.retryExhaustedNotification(claim.id), undefined);
+      }
+      await creditStorage.failNotification(
+        claim.id,
+        claim.notificationLeaseId,
+        `SMTP failure ${attempt}`,
+      );
+    }
+
+    const [exhausted] = await creditStorage.getExhaustedNotifications();
+    assert.equal(exhausted.id, adjustment.transaction.id);
+    assert.equal(exhausted.notificationStatus, "exhausted");
+    assert.equal(exhausted.notificationAttempts, 5);
+    assert.equal(exhausted.notificationLastError, "SMTP failure 5");
+
+    const retries = await Promise.all([
+      creditStorage.retryExhaustedNotification(exhausted.id),
+      creditStorage.retryExhaustedNotification(exhausted.id),
+    ]);
+    assert.equal(retries.filter(Boolean).length, 1);
+
+    const [reset] = await db.select().from(creditTransactions)
+      .where(eq(creditTransactions.id, adjustment.transaction.id));
+    const [updatedUser] = await db.select().from(users).where(eq(users.id, user.id));
+    assert.equal(reset.notificationStatus, "pending");
+    assert.equal(reset.notificationAttempts, 0);
+    assert.equal(reset.notificationLastError, null);
+    assert.equal(updatedUser.creditBalanceCents, 450);
+
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const claim = (await creditStorage.claimPendingNotifications())
+        .find(item => item.id === adjustment.transaction.id);
+      assert.ok(claim?.notificationLeaseId);
+      await creditStorage.failNotification(claim.id, claim.notificationLeaseId, "Retry failure");
+    }
+    const finalClaim = (await creditStorage.claimPendingNotifications())
+      .find(item => item.id === adjustment.transaction.id);
+    assert.ok(finalClaim?.notificationLeaseId);
+    await db.update(creditTransactions).set({
+      notificationAttemptedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+    }).where(eq(creditTransactions.id, adjustment.transaction.id));
+
+    const stale = (await creditStorage.getExhaustedNotifications())
+      .find(item => item.id === adjustment.transaction.id);
+    assert.equal(stale?.notificationStatus, "exhausted");
+    assert.equal(
+      stale?.notificationLastError,
+      "Email delivery attempt timed out before completion",
+    );
+    assert.ok(await creditStorage.retryExhaustedNotification(adjustment.transaction.id));
+
+    const ledger = await db.select().from(creditTransactions)
+      .where(eq(creditTransactions.id, adjustment.transaction.id));
+    assert.equal(ledger.length, 1);
+    assert.equal(ledger[0].amountCents, 450);
+    assert.equal(ledger[0].notificationAttempts, 0);
+  });
+
   it("replays an admin adjustment safely and rejects key reuse with different data", async () => {
     const user = await createUser();
     const idempotencyKey = `adjustment-${randomUUID()}`;

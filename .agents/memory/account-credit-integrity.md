@@ -20,3 +20,9 @@ External credit notifications use a transactional outbox with canonical provider
 **Why:** Polling and callbacks can observe the same transition concurrently, while a network timeout can make Telegram acceptance unknowable. Exactly-once external messaging is not available, but duplicate observations and ordinary stalled sends can be controlled.
 
 **How to apply:** Insert one event per top-up/status in the same transaction as the state change, use leased retry workers with request timeouts shorter than the lease, and require the current lease token to acknowledge delivery.
+
+Manual recovery of an exhausted credit notification may reset only its delivery fields, and only after any active lease has expired; it must never replay the financial operation that created the ledger row.
+
+**Why:** Admin retries can race each other or a delayed worker. A conditional state transition prevents duplicate retry ownership while lease-token acknowledgements stop an old worker from overwriting the recovered state.
+
+**How to apply:** Expose only terminal notifications at the attempt limit, convert stale final leases to a recoverable terminal state, and atomically reset one existing outbox record without inserting or mutating ledger, balance, top-up, refund, or order data.
