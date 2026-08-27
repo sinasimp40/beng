@@ -1,0 +1,67 @@
+root@srv1128711:~# cd /var/www/beng
+npx tsx scripts/list-admins.ts
+pm2 logs beng --lines 100
+/var/www/beng/server/db.ts:8
+  throw new Error(
+        ^
+
+
+Error: DATABASE_URL must be set. Did you forget to provision a database?
+    at <anonymous> (/var/www/beng/server/db.ts:8:9)
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+
+Node.js v20.20.0
+[TAILING] Tailing last 100 lines for [beng] process (change the value with --lines option)
+/root/.pm2/logs/beng-error-2.log last 100 lines:
+/root/.pm2/logs/beng-out-2.log last 100 lines:
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+2|beng     | 
+2|beng     | > rest-express@1.0.0 start
+2|beng     | > NODE_ENV=production node dist/index.cjs
+2|beng     | 
+
