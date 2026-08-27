@@ -1,13 +1,10 @@
-import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { after, afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import express from "express";
-import { createServer, type Server } from "node:http";
 import { eq, inArray } from "drizzle-orm";
 import { db, pool } from "./db";
 import { creditStorage, InsufficientCreditError } from "./creditStorage";
-import { hashPassword } from "./auth";
-import { registerRoutes, stopOrderPolling } from "./routes";
+import { stopOrderPolling } from "./routes";
 import { importDatabase } from "./services/databaseBackupService";
 import {
   creditTopups,
@@ -23,28 +20,6 @@ const userIds = new Set<string>();
 const productIds = new Set<string>();
 const orderIds = new Set<string>();
 const topupIds = new Set<string>();
-const routeTestPassword = "route-test-password";
-let routeServer: Server | undefined;
-let routeBaseUrl = "";
-
-before(async () => {
-  const app = express();
-  app.use(express.json());
-  routeServer = createServer(app);
-  await registerRoutes(routeServer, app);
-  await new Promise<void>((resolve, reject) => {
-    routeServer!.once("error", reject);
-    routeServer!.listen(0, "127.0.0.1", () => {
-      const address = routeServer!.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("Route test server did not expose an address"));
-        return;
-      }
-      routeBaseUrl = `http://127.0.0.1:${address.port}`;
-      resolve();
-    });
-  });
-});
 
 async function createUser(balanceCents = 0) {
   const id = `credit-test-user-${randomUUID()}`;
@@ -112,161 +87,10 @@ afterEach(async () => {
 
 after(async () => {
   stopOrderPolling();
-  if (routeServer?.listening) {
-    await new Promise<void>((resolve, reject) => {
-      routeServer!.close(error => error ? reject(error) : resolve());
-    });
-  }
   await pool.end();
 });
 
-async function httpRequest(
-  path: string,
-  options: { method?: string; token?: string; body?: unknown } = {},
-) {
-  const headers: Record<string, string> = {};
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
-  if (options.body !== undefined) headers["content-type"] = "application/json";
-  const response = await fetch(`${routeBaseUrl}${path}`, {
-    method: options.method || "GET",
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  const text = await response.text();
-  return {
-    status: response.status,
-    body: text ? JSON.parse(text) : undefined,
-  };
-}
-
-async function createRouteUser(role: "user" | "admin") {
-  const user = await createUser();
-  await db.update(users)
-    .set({ password: await hashPassword(routeTestPassword), role })
-    .where(eq(users.id, user.id));
-  return user;
-}
-
-async function loginRouteUser(user: { email: string }) {
-  const response = await httpRequest("/api/auth/login", {
-    method: "POST",
-    body: { email: user.email, password: routeTestPassword },
-  });
-  assert.equal(response.status, 200);
-  assert.equal(typeof response.body?.token, "string");
-  return response.body.token as string;
-}
-
-async function createExhaustedCreditEmail() {
-  const user = await createUser();
-  const adjustment = await creditStorage.adjustCredit({
-    userId: user.id,
-    amountCents: 450,
-    reason: "Route test adjustment",
-    actorUserId: user.id,
-    actorEmail: user.email,
-    idempotencyKey: `adjustment-${randomUUID()}`,
-  });
-
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    const claim = (await creditStorage.claimPendingNotifications())
-      .find(item => item.id === adjustment.transaction.id);
-    assert.ok(claim?.notificationLeaseId);
-    await creditStorage.failNotification(
-      claim.id,
-      claim.notificationLeaseId,
-      `Route test SMTP failure ${attempt}`,
-    );
-  }
-
-  return { user, transactionId: adjustment.transaction.id };
-}
-
 describe("account credit integrity", () => {
-  it("blocks non-admins from listing or retrying exhausted credit emails", async () => {
-    const { transactionId } = await createExhaustedCreditEmail();
-    const regularUser = await createRouteUser("user");
-    const regularToken = await loginRouteUser(regularUser);
-
-    const unauthenticatedList = await httpRequest("/api/admin/credit-notifications");
-    const unauthenticatedRetry = await httpRequest(
-      `/api/admin/credit-notifications/${transactionId}/retry`,
-      { method: "POST" },
-    );
-    assert.equal(unauthenticatedList.status, 401);
-    assert.equal(unauthenticatedRetry.status, 401);
-
-    const regularList = await httpRequest("/api/admin/credit-notifications", {
-      token: regularToken,
-    });
-    const regularRetry = await httpRequest(
-      `/api/admin/credit-notifications/${transactionId}/retry`,
-      { method: "POST", token: regularToken },
-    );
-    assert.equal(regularList.status, 403);
-    assert.equal(regularRetry.status, 403);
-
-    const [unchanged] = await db.select().from(creditTransactions)
-      .where(eq(creditTransactions.id, transactionId));
-    const [user] = await db.select().from(users).where(eq(users.id, regularUser.id));
-    assert.equal(unchanged.notificationStatus, "exhausted");
-    assert.equal(unchanged.notificationAttempts, 5);
-    assert.equal(user.creditBalanceCents, 0);
-  });
-
-  it("lists stale final email leases and allows exactly one concurrent admin retry", async () => {
-    const { user, transactionId } = await createExhaustedCreditEmail();
-    await db.update(creditTransactions).set({
-      notificationStatus: "sending",
-      notificationAttempts: 5,
-      notificationLeaseId: randomUUID(),
-      notificationAttemptedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
-      notificationLastError: "SMTP request timed out",
-    }).where(eq(creditTransactions.id, transactionId));
-
-    const adminUser = await createRouteUser("admin");
-    const adminToken = await loginRouteUser(adminUser);
-    const listed = await httpRequest("/api/admin/credit-notifications", {
-      token: adminToken,
-    });
-    assert.equal(listed.status, 200);
-    const listedTransaction = listed.body.find(
-      (transaction: { id: string }) => transaction.id === transactionId,
-    );
-    assert.equal(listedTransaction?.notificationStatus, "exhausted");
-    assert.equal(listedTransaction?.notificationAttempts, 5);
-    assert.equal(
-      listedTransaction?.notificationLastError,
-      "Email delivery attempt timed out before completion",
-    );
-
-    const retries = await Promise.all([
-      httpRequest(`/api/admin/credit-notifications/${transactionId}/retry`, {
-        method: "POST",
-        token: adminToken,
-      }),
-      httpRequest(`/api/admin/credit-notifications/${transactionId}/retry`, {
-        method: "POST",
-        token: adminToken,
-      }),
-    ]);
-    assert.deepEqual(retries.map(response => response.status).sort(), [200, 409]);
-    const successfulRetry = retries.find(response => response.status === 200);
-    assert.equal(successfulRetry?.body.id, transactionId);
-    assert.equal(successfulRetry?.body.notificationStatus, "pending");
-    assert.equal(successfulRetry?.body.notificationAttempts, 0);
-
-    const [updatedTransaction] = await db.select().from(creditTransactions)
-      .where(eq(creditTransactions.id, transactionId));
-    const [unchangedUser] = await db.select().from(users).where(eq(users.id, user.id));
-    const ledger = await db.select().from(creditTransactions)
-      .where(eq(creditTransactions.userId, user.id));
-    assert.equal(unchangedUser.creditBalanceCents, 450);
-    assert.equal(ledger.length, 1);
-    assert.equal(updatedTransaction.amountCents, 450);
-    assert.equal(updatedTransaction.type, "admin_credit");
-  });
-
   it("credits a completed gateway top-up exactly once across duplicate callbacks", async () => {
     const user = await createUser();
     const { topup } = await creditStorage.createTopup({
@@ -420,77 +244,6 @@ describe("account credit integrity", () => {
     assert.ok(event.sentAt);
   });
 
-  it("marks exhausted Telegram alerts and atomically resets one retry without changing credit", async () => {
-    const user = await createUser();
-    const { topup } = await creditStorage.createTopup({
-      userId: user.id,
-      userEmail: user.email,
-      amountCents: 900,
-      payCurrency: "btc",
-      idempotencyKey: `topup-create-${randomUUID()}`,
-    });
-    topupIds.add(topup.id);
-    await creditStorage.attachTopupPayment(topup.id, {
-      paymentId: `credit-test-payment-${randomUUID()}`,
-      gatewayStatus: "waiting",
-    });
-
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      const [claim] = (await creditStorage.claimPendingTelegramEvents())
-        .filter(event => event.topupId === topup.id);
-      assert.ok(claim?.deliveryLeaseId);
-      await creditStorage.failTelegramEvent(
-        claim.id,
-        claim.deliveryLeaseId,
-        `Telegram failure ${attempt}`,
-      );
-    }
-
-    const [exhausted] = await db.select().from(creditTelegramEvents)
-      .where(eq(creditTelegramEvents.id, (await creditStorage.getExhaustedTelegramEvents())
-        .find(event => event.topupId === topup.id)!.id));
-    assert.equal(exhausted.deliveryStatus, "exhausted");
-    assert.equal(exhausted.deliveryAttempts, 5);
-    assert.equal(exhausted.deliveryLastError, "Telegram failure 5");
-
-    const retries = await Promise.all([
-      creditStorage.retryExhaustedTelegramEvent(exhausted.id),
-      creditStorage.retryExhaustedTelegramEvent(exhausted.id),
-    ]);
-    assert.equal(retries.filter(Boolean).length, 1);
-
-    const [reset] = await db.select().from(creditTelegramEvents)
-      .where(eq(creditTelegramEvents.id, exhausted.id));
-    const [unchangedUser] = await db.select().from(users).where(eq(users.id, user.id));
-    const ledger = await db.select().from(creditTransactions)
-      .where(eq(creditTransactions.userId, user.id));
-    assert.equal(reset.deliveryStatus, "pending");
-    assert.equal(reset.deliveryAttempts, 0);
-    assert.equal(reset.deliveryLastError, null);
-    assert.equal(unchangedUser.creditBalanceCents, 0);
-    assert.equal(ledger.length, 0);
-
-    await db.update(creditTelegramEvents).set({
-      deliveryStatus: "pending",
-      deliveryAttempts: 4,
-    }).where(eq(creditTelegramEvents.id, exhausted.id));
-    const staleFinalClaim = (await creditStorage.claimPendingTelegramEvents())
-      .find(event => event.id === exhausted.id);
-    assert.ok(staleFinalClaim?.deliveryLeaseId);
-    await db.update(creditTelegramEvents).set({
-      deliveryAttemptedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
-    }).where(eq(creditTelegramEvents.id, exhausted.id));
-
-    const staleExhausted = (await creditStorage.getExhaustedTelegramEvents())
-      .find(event => event.id === exhausted.id);
-    assert.equal(staleExhausted?.deliveryStatus, "exhausted");
-    assert.equal(
-      staleExhausted?.deliveryLastError,
-      "Telegram delivery attempt timed out before completion",
-    );
-    assert.ok(await creditStorage.retryExhaustedTelegramEvent(exhausted.id));
-  });
-
   it("allows only one concurrent purchase when the balance covers one", async () => {
     const user = await createUser(100);
     const product = await createProduct(1, ["credential-a", "credential-b"]);
@@ -614,80 +367,6 @@ describe("account credit integrity", () => {
     assert.equal(ledger.length, 1);
     assert.equal(ledger[0].notificationStatus, "sent");
     assert.equal(ledger[0].notificationAttempts, 2);
-  });
-
-  it("exposes and safely recovers exhausted credit emails without changing the ledger", async () => {
-    const user = await createUser();
-    const adjustment = await creditStorage.adjustCredit({
-      userId: user.id,
-      amountCents: 450,
-      reason: "Exhausted email test",
-      actorUserId: user.id,
-      actorEmail: user.email,
-      idempotencyKey: `adjustment-${randomUUID()}`,
-    });
-
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      const claim = (await creditStorage.claimPendingNotifications())
-        .find(item => item.id === adjustment.transaction.id);
-      assert.ok(claim?.notificationLeaseId);
-      if (attempt === 5) {
-        assert.equal(await creditStorage.retryExhaustedNotification(claim.id), undefined);
-      }
-      await creditStorage.failNotification(
-        claim.id,
-        claim.notificationLeaseId,
-        `SMTP failure ${attempt}`,
-      );
-    }
-
-    const [exhausted] = await creditStorage.getExhaustedNotifications();
-    assert.equal(exhausted.id, adjustment.transaction.id);
-    assert.equal(exhausted.notificationStatus, "exhausted");
-    assert.equal(exhausted.notificationAttempts, 5);
-    assert.equal(exhausted.notificationLastError, "SMTP failure 5");
-
-    const retries = await Promise.all([
-      creditStorage.retryExhaustedNotification(exhausted.id),
-      creditStorage.retryExhaustedNotification(exhausted.id),
-    ]);
-    assert.equal(retries.filter(Boolean).length, 1);
-
-    const [reset] = await db.select().from(creditTransactions)
-      .where(eq(creditTransactions.id, adjustment.transaction.id));
-    const [updatedUser] = await db.select().from(users).where(eq(users.id, user.id));
-    assert.equal(reset.notificationStatus, "pending");
-    assert.equal(reset.notificationAttempts, 0);
-    assert.equal(reset.notificationLastError, null);
-    assert.equal(updatedUser.creditBalanceCents, 450);
-
-    for (let attempt = 1; attempt <= 4; attempt++) {
-      const claim = (await creditStorage.claimPendingNotifications())
-        .find(item => item.id === adjustment.transaction.id);
-      assert.ok(claim?.notificationLeaseId);
-      await creditStorage.failNotification(claim.id, claim.notificationLeaseId, "Retry failure");
-    }
-    const finalClaim = (await creditStorage.claimPendingNotifications())
-      .find(item => item.id === adjustment.transaction.id);
-    assert.ok(finalClaim?.notificationLeaseId);
-    await db.update(creditTransactions).set({
-      notificationAttemptedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
-    }).where(eq(creditTransactions.id, adjustment.transaction.id));
-
-    const stale = (await creditStorage.getExhaustedNotifications())
-      .find(item => item.id === adjustment.transaction.id);
-    assert.equal(stale?.notificationStatus, "exhausted");
-    assert.equal(
-      stale?.notificationLastError,
-      "Email delivery attempt timed out before completion",
-    );
-    assert.ok(await creditStorage.retryExhaustedNotification(adjustment.transaction.id));
-
-    const ledger = await db.select().from(creditTransactions)
-      .where(eq(creditTransactions.id, adjustment.transaction.id));
-    assert.equal(ledger.length, 1);
-    assert.equal(ledger[0].amountCents, 450);
-    assert.equal(ledger[0].notificationAttempts, 0);
   });
 
   it("replays an admin adjustment safely and rejects key reuse with different data", async () => {

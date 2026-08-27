@@ -762,48 +762,6 @@ export class CreditStorage {
     ));
   }
 
-  private async exhaustStaleFinalNotification(id?: string): Promise<void> {
-    const staleBefore = new Date(Date.now() - NOTIFICATION_LEASE_MS).toISOString();
-    await db.update(creditTransactions).set({
-      notificationStatus: "exhausted",
-      notificationLastError: "Email delivery attempt timed out before completion",
-      notificationLeaseId: null,
-    }).where(and(
-      ...(id ? [eq(creditTransactions.id, id)] : []),
-      eq(creditTransactions.notificationStatus, "sending"),
-      gte(creditTransactions.notificationAttempts, MAX_NOTIFICATION_ATTEMPTS),
-      isNotNull(creditTransactions.notificationAttemptedAt),
-      lte(creditTransactions.notificationAttemptedAt, staleBefore),
-    ));
-  }
-
-  async getExhaustedNotifications(): Promise<CreditTransaction[]> {
-    await this.exhaustStaleFinalNotification();
-    return db.select().from(creditTransactions)
-      .where(and(
-        gte(creditTransactions.notificationAttempts, MAX_NOTIFICATION_ATTEMPTS),
-        inArray(creditTransactions.notificationStatus, ["failed", "exhausted"]),
-      ))
-      .orderBy(desc(creditTransactions.notificationAttemptedAt), desc(creditTransactions.createdAt));
-  }
-
-  async retryExhaustedNotification(id: string): Promise<CreditTransaction | undefined> {
-    await this.exhaustStaleFinalNotification(id);
-    const [transaction] = await db.update(creditTransactions).set({
-      notificationStatus: "pending",
-      notificationAttempts: 0,
-      notificationLeaseId: null,
-      notificationAttemptedAt: null,
-      notificationLastError: null,
-      notifiedAt: null,
-    }).where(and(
-      eq(creditTransactions.id, id),
-      gte(creditTransactions.notificationAttempts, MAX_NOTIFICATION_ATTEMPTS),
-      inArray(creditTransactions.notificationStatus, ["failed", "exhausted"]),
-    )).returning();
-    return transaction;
-  }
-
   async claimPendingTelegramEvents(limit = 20): Promise<CreditTelegramEvent[]> {
     const staleBefore = new Date(Date.now() - NOTIFICATION_LEASE_MS).toISOString();
     return db.transaction(async tx => {
@@ -857,47 +815,6 @@ export class CreditStorage {
     ));
   }
 
-  private async exhaustStaleFinalTelegramAttempt(id?: string): Promise<void> {
-    const staleBefore = new Date(Date.now() - NOTIFICATION_LEASE_MS).toISOString();
-    await db.update(creditTelegramEvents).set({
-      deliveryStatus: "exhausted",
-      deliveryLastError: "Telegram delivery attempt timed out before completion",
-      deliveryLeaseId: null,
-    }).where(and(
-      ...(id ? [eq(creditTelegramEvents.id, id)] : []),
-      eq(creditTelegramEvents.deliveryStatus, "sending"),
-      gte(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
-      isNotNull(creditTelegramEvents.deliveryAttemptedAt),
-      lte(creditTelegramEvents.deliveryAttemptedAt, staleBefore),
-    ));
-  }
-
-  async getExhaustedTelegramEvents(): Promise<CreditTelegramEvent[]> {
-    await this.exhaustStaleFinalTelegramAttempt();
-    return db.select().from(creditTelegramEvents)
-      .where(and(
-        gte(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
-        inArray(creditTelegramEvents.deliveryStatus, ["failed", "exhausted"]),
-      ))
-      .orderBy(desc(creditTelegramEvents.deliveryAttemptedAt), desc(creditTelegramEvents.createdAt));
-  }
-
-  async retryExhaustedTelegramEvent(id: string): Promise<CreditTelegramEvent | undefined> {
-    await this.exhaustStaleFinalTelegramAttempt(id);
-    const [event] = await db.update(creditTelegramEvents).set({
-      deliveryStatus: "pending",
-      deliveryAttempts: 0,
-      deliveryLeaseId: null,
-      deliveryAttemptedAt: null,
-      deliveryLastError: null,
-      sentAt: null,
-    }).where(and(
-      eq(creditTelegramEvents.id, id),
-      gte(creditTelegramEvents.deliveryAttempts, MAX_NOTIFICATION_ATTEMPTS),
-      inArray(creditTelegramEvents.deliveryStatus, ["failed", "exhausted"]),
-    )).returning();
-    return event;
-  }
 }
 
 export const creditStorage = new CreditStorage();

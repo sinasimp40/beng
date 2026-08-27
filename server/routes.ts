@@ -2312,56 +2312,6 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/admin/credit-telegram-events", requireAdmin, async (_req, res) => {
-    try {
-      res.json(await creditStorage.getExhaustedTelegramEvents());
-    } catch (error) {
-      console.error("Error fetching exhausted Telegram events:", error);
-      res.status(500).json({ error: "Failed to fetch exhausted Telegram alerts" });
-    }
-  });
-
-  app.get("/api/admin/credit-notifications", requireAdmin, async (_req, res) => {
-    try {
-      res.json(await creditStorage.getExhaustedNotifications());
-    } catch (error) {
-      console.error("Error fetching exhausted credit notifications:", error);
-      res.status(500).json({ error: "Failed to fetch exhausted credit emails" });
-    }
-  });
-
-  app.post("/api/admin/credit-notifications/:transactionId/retry", requireAdmin, async (req, res) => {
-    try {
-      const transaction = await creditStorage.retryExhaustedNotification(req.params.transactionId);
-      if (!transaction) {
-        return res.status(409).json({ error: "Credit email is no longer exhausted" });
-      }
-      void processCreditNotifications().catch(error =>
-        console.error("Credit notification processing failed:", error),
-      );
-      res.json(transaction);
-    } catch (error) {
-      console.error("Error retrying exhausted credit notification:", error);
-      res.status(500).json({ error: "Failed to retry credit email" });
-    }
-  });
-
-  app.post("/api/admin/credit-telegram-events/:eventId/retry", requireAdmin, async (req, res) => {
-    try {
-      const event = await creditStorage.retryExhaustedTelegramEvent(req.params.eventId);
-      if (!event) {
-        return res.status(409).json({ error: "Telegram alert is no longer exhausted" });
-      }
-      void processCreditTelegramNotifications().catch(error =>
-        console.error("Credit Telegram notification processing failed:", error),
-      );
-      res.json(event);
-    } catch (error) {
-      console.error("Error retrying exhausted Telegram event:", error);
-      res.status(500).json({ error: "Failed to retry Telegram alert" });
-    }
-  });
-
   app.post("/api/admin/users/:userId/credit", requireAdmin, async (req, res) => {
     const auth = getRequestSession(req)!;
     try {
