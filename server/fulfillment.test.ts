@@ -367,6 +367,113 @@ describe("digital fulfillment integrity", () => {
     assert.equal(exhausted?.deliveryAttemptedAt, null);
   });
 
+  it("lets an admin reset an exhausted delivery with an audit trail", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "manual-retry-credential",
+    });
+
+    for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt++) {
+      const lease = await storage.claimOrderDelivery(orderId);
+      assert.ok(lease?.deliveryLeaseId);
+      assert.ok(await storage.failOrderDelivery(orderId, lease.deliveryLeaseId, `SMTP failure ${attempt}`));
+    }
+
+    const retried = await storage.retryExhaustedOrderDelivery(orderId, {
+      userId: "admin-user-id",
+      email: "admin@example.com",
+    });
+    assert.ok(retried);
+    assert.equal(retried.status, "fulfilling");
+    assert.equal(retried.deliveryStatus, "pending");
+    assert.equal(retried.deliveryAttempts, 0);
+    assert.equal(retried.deliveryRetryCount, 1);
+    assert.equal(retried.deliveryLastError, null);
+    assert.equal(retried.deliveryLastRetriedBy, "admin-user-id");
+    assert.equal(retried.deliveryLastRetriedByEmail, "admin@example.com");
+    assert.ok(retried.deliveryLastRetriedAt);
+
+    const nextAttempt = await storage.claimOrderDelivery(orderId);
+    assert.ok(nextAttempt?.deliveryLeaseId);
+    assert.equal(nextAttempt.deliveryAttempts, 1);
+    assert.equal(nextAttempt.deliveryRetryCount, 1);
+  });
+
+  it("does not let an admin reset a delivery that still has an active lease", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "leased-credential",
+    });
+
+    const active = await storage.claimOrderDelivery(orderId);
+    assert.ok(active?.deliveryLeaseId);
+    const reset = await storage.retryExhaustedOrderDelivery(orderId, {
+      userId: "admin-user-id",
+      email: "admin@example.com",
+    });
+    assert.equal(reset, undefined);
+
+    const unchanged = await storage.getOrderByOrderId(orderId);
+    assert.equal(unchanged?.deliveryStatus, "sending");
+    assert.equal(unchanged?.deliveryLeaseId, active.deliveryLeaseId);
+    assert.equal(unchanged?.deliveryRetryCount, 0);
+  });
+
+  it("prevents generic status updates from bypassing delivery completion", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "undelivered-credential",
+    });
+
+    await assert.rejects(
+      storage.updateOrderByOrderId(orderId, { status: "completed" }),
+      /lease-aware fulfillment path/,
+    );
+    const unchanged = await storage.getOrderByOrderId(orderId);
+    assert.equal(unchanged?.status, "fulfilling");
+    assert.equal(unchanged?.deliveryStatus, "pending");
+    assert.equal(unchanged?.sentStock, "undelivered-credential");
+  });
+
+  it("prevents stale payment states from overwriting an active delivery lease", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "leased-credential",
+    });
+
+    const lease = await storage.claimOrderDelivery(orderId);
+    assert.ok(lease?.deliveryLeaseId);
+    assert.equal(
+      await storage.updateOrderByOrderId(orderId, { status: "confirming" }),
+      undefined,
+    );
+    assert.equal(
+      await storage.updateOrderByOrderId(orderId, { status: "failed" }),
+      undefined,
+    );
+
+    const stillSending = await storage.getOrderByOrderId(orderId);
+    assert.equal(stillSending?.status, "fulfilling");
+    assert.equal(stillSending?.deliveryStatus, "sending");
+    assert.equal(stillSending?.deliveryLeaseId, lease.deliveryLeaseId);
+
+    const completed = await storage.completeOrderDelivery(orderId, lease.deliveryLeaseId);
+    assert.equal(completed?.status, "completed");
+    assert.equal(completed?.deliveryStatus, "sent");
+  });
+
   it("fulfills a legacy order without order_items rows", async () => {
     const productId = await createProduct(["legacy-a", "legacy-b"]);
     const orderId = await createOrder({

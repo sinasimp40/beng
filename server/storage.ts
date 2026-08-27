@@ -33,6 +33,7 @@ import { randomUUID } from "node:crypto";
 // allowing the polling worker to recover an abandoned delivery promptly.
 export const DELIVERY_LEASE_TIMEOUT_MS = 5 * 60 * 1000;
 export const MAX_DELIVERY_ATTEMPTS = 3;
+export const MAX_MANUAL_DELIVERY_RETRIES = 3;
 
 export interface IStorage {
   // Users
@@ -67,8 +68,9 @@ export interface IStorage {
   deleteOrderItemsByOrderIds(orderIds: string[]): Promise<void>;
   claimOrderStock(orderId: string): Promise<{ order: Order; productIds: string[] } | null>;
   claimOrderDelivery(orderId: string): Promise<Order | undefined>;
-  failOrderDelivery(orderId: string, leaseId: string): Promise<Order | undefined>;
+  failOrderDelivery(orderId: string, leaseId: string, error?: string): Promise<Order | undefined>;
   completeOrderDelivery(orderId: string, leaseId: string): Promise<Order | undefined>;
+  retryExhaustedOrderDelivery(orderId: string, admin: { userId: string; email: string }): Promise<Order | undefined>;
   completeOrderWithoutDelivery(orderId: string): Promise<Order | undefined>;
 
   // Statistics
@@ -220,7 +222,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateOrderByOrderId(orderId: string, updates: Partial<InsertOrder>): Promise<Order | undefined> {
-    const [order] = await db.update(orders).set(updates).where(eq(orders.orderId, orderId)).returning();
+    if (updates.status === "completed") {
+      throw new Error("Completed order transitions must use the lease-aware fulfillment path");
+    }
+    const [order] = await db.update(orders).set(updates).where(and(
+      eq(orders.orderId, orderId),
+      ...(updates.status
+        ? [inArray(orders.status, ["creating", "pending", "confirming"])]
+        : []),
+    )).returning();
     return order || undefined;
   }
 
@@ -328,6 +338,7 @@ export class DatabaseStorage implements IStorage {
         deliveryAttemptedAt: null,
         deliveryAttempts: 0,
         deliveryLeaseId: null,
+      deliveryLastError: null,
       }).where(eq(orders.orderId, orderId)).returning();
       return { order: claimedOrder, productIds };
     });
@@ -342,6 +353,7 @@ export class DatabaseStorage implements IStorage {
       deliveryAttemptedAt: now.toISOString(),
       deliveryAttempts: sql`${orders.deliveryAttempts} + 1`,
       deliveryLeaseId: leaseId,
+      deliveryLastError: null,
     }).where(and(
       eq(orders.orderId, orderId),
       eq(orders.status, "fulfilling"),
@@ -365,6 +377,7 @@ export class DatabaseStorage implements IStorage {
       deliveryStatus: "exhausted",
       deliveryAttemptedAt: null,
       deliveryLeaseId: null,
+      deliveryLastError: "Delivery attempt timed out before completion",
     }).where(and(
       eq(orders.orderId, orderId),
       eq(orders.status, "fulfilling"),
@@ -376,13 +389,14 @@ export class DatabaseStorage implements IStorage {
     return undefined;
   }
 
-  async failOrderDelivery(orderId: string, leaseId: string): Promise<Order | undefined> {
+  async failOrderDelivery(orderId: string, leaseId: string, error = "Delivery email failed"): Promise<Order | undefined> {
     if (!leaseId) return undefined;
     const [order] = await db.update(orders).set({
       status: sql`CASE WHEN ${orders.deliveryAttempts} >= ${MAX_DELIVERY_ATTEMPTS} THEN 'fulfillment_failed' ELSE 'fulfilling' END`,
       deliveryStatus: sql`CASE WHEN ${orders.deliveryAttempts} >= ${MAX_DELIVERY_ATTEMPTS} THEN 'exhausted' ELSE 'failed' END`,
       deliveryAttemptedAt: null,
       deliveryLeaseId: null,
+      deliveryLastError: error.slice(0, 1000),
     }).where(and(
       eq(orders.orderId, orderId),
       eq(orders.deliveryStatus, "sending"),
@@ -398,11 +412,42 @@ export class DatabaseStorage implements IStorage {
       deliveryStatus: "sent",
       deliveryAttemptedAt: null,
       deliveryLeaseId: null,
+      deliveryLastError: null,
     }).where(and(
       eq(orders.orderId, orderId),
       eq(orders.status, "fulfilling"),
       eq(orders.deliveryStatus, "sending"),
       eq(orders.deliveryLeaseId, leaseId),
+    )).returning();
+    return order || undefined;
+  }
+
+  async retryExhaustedOrderDelivery(
+    orderId: string,
+    admin: { userId: string; email: string },
+  ): Promise<Order | undefined> {
+    const now = new Date().toISOString();
+    const [order] = await db.update(orders).set({
+      status: "fulfilling",
+      deliveryStatus: "pending",
+      deliveryAttemptedAt: null,
+      deliveryAttempts: 0,
+      deliveryLeaseId: null,
+      deliveryLastError: null,
+      deliveryRetryCount: sql`${orders.deliveryRetryCount} + 1`,
+      deliveryLastRetriedAt: now,
+      deliveryLastRetriedBy: admin.userId,
+      deliveryLastRetriedByEmail: admin.email,
+    }).where(and(
+      eq(orders.orderId, orderId),
+      eq(orders.status, "fulfillment_failed"),
+      eq(orders.deliveryStatus, "exhausted"),
+      gte(orders.deliveryAttempts, MAX_DELIVERY_ATTEMPTS),
+      lt(orders.deliveryRetryCount, MAX_MANUAL_DELIVERY_RETRIES),
+      isNull(orders.deliveryAttemptedAt),
+      isNull(orders.deliveryLeaseId),
+      isNotNull(orders.sentStock),
+      isNotNull(orders.email),
     )).returning();
     return order || undefined;
   }

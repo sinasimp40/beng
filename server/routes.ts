@@ -199,6 +199,23 @@ const checkoutItemsSchema = z.array(z.object({
   quantity: z.coerce.number().int().min(1).max(100),
 })).min(1).max(50);
 
+// Delivery state is owned by the lease-aware fulfillment methods. Keeping
+// these fields out of the generic admin patch route prevents a manual edit
+// from completing or restarting an order around an active delivery lease.
+const adminOrderUpdateSchema = insertOrderSchema.partial().omit({
+  status: true,
+  sentStock: true,
+  deliveryStatus: true,
+  deliveryAttemptedAt: true,
+  deliveryAttempts: true,
+  deliveryLeaseId: true,
+  deliveryLastError: true,
+  deliveryRetryCount: true,
+  deliveryLastRetriedAt: true,
+  deliveryLastRetriedBy: true,
+  deliveryLastRetriedByEmail: true,
+});
+
 function getRequestSession(req: Request) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) return undefined;
@@ -387,7 +404,11 @@ async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined
         stockItem: deliveryStock,
       });
       if (!emailResult.success) {
-        const failedOrder = await storage.failOrderDelivery(orderId, deliveryLeaseId);
+        const failedOrder = await storage.failOrderDelivery(
+          orderId,
+          deliveryLeaseId,
+          emailResult.error || "Delivery email failed",
+        );
         if (failedOrder) {
           broadcastOrderUpdate("order_updated", failedOrder);
         }
@@ -407,6 +428,44 @@ async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined
   } finally {
     processingOrders.delete(orderId);
   }
+}
+
+const orderGatewayStatusMap: Record<string, string> = {
+  waiting: "pending",
+  confirming: "confirming",
+  confirmed: "confirming",
+  sending: "confirming",
+  partially_paid: "pending",
+  finished: "completed",
+  failed: "failed",
+  refunded: "refunded",
+  expired: "expired",
+};
+
+async function applyOrderGatewayStatus(order: Order, gatewayStatus: string): Promise<Order> {
+  const nextStatus = orderGatewayStatusMap[gatewayStatus] || order.status;
+  if (nextStatus === order.status) return order;
+
+  if (nextStatus === "completed") {
+    if (order.status === "refunded") return order;
+    return await fulfillCompletedOrder(order.orderId)
+      || await storage.getOrderByOrderId(order.orderId)
+      || order;
+  }
+
+  // Once fulfillment owns the order, delayed or out-of-order payment updates
+  // must not overwrite a sending lease or strand already-claimed credentials.
+  if (!["creating", "pending", "confirming"].includes(order.status)) {
+    return order;
+  }
+
+  const updatedOrder = await storage.updateOrderByOrderId(order.orderId, { status: nextStatus });
+  if (!updatedOrder) {
+    return await storage.getOrderByOrderId(order.orderId) || order;
+  }
+  broadcastOrderUpdate("order_updated", updatedOrder);
+  notifyTelegramOrder(updatedOrder, true);
+  return updatedOrder;
 }
 
 // Background polling interval for pending orders (auto-update from NOWPayments)
@@ -461,37 +520,9 @@ async function pollPendingOrders() {
       try {
         const status = await nowPaymentsService.getPaymentStatus(order.paymentId!);
         
-        const statusMap: Record<string, string> = {
-          'waiting': 'pending',
-          'confirming': 'confirming',
-          'confirmed': 'confirming',
-          'sending': 'confirming',
-          'partially_paid': 'pending',
-          'finished': 'completed',
-          'failed': 'failed',
-          'refunded': 'refunded',
-          'expired': 'expired'
-        };
-        
-        const newStatus = statusMap[status.payment_status] || order.status;
-        
-        if (newStatus !== order.status) {
-          // Complete fulfillment (including retrying delivery after stock was claimed).
-          if (newStatus === 'completed') {
-            const updatedOrder = await fulfillCompletedOrder(order.orderId);
-            if (updatedOrder) {
-              broadcastPaymentStatus(order.paymentId!, { ...status, order: updatedOrder });
-            }
-          } else {
-            // Just update the status
-            await storage.updateOrderByOrderId(order.orderId, { status: newStatus });
-            const updatedOrder = await storage.getOrderByOrderId(order.orderId);
-            if (updatedOrder) {
-              broadcastPaymentStatus(order.paymentId!, { ...status, order: updatedOrder });
-              broadcastOrderUpdate("order_updated", updatedOrder);
-              notifyTelegramOrder(updatedOrder, true);
-            }
-          }
+        const updatedOrder = await applyOrderGatewayStatus(order, status.payment_status);
+        if (updatedOrder.status !== order.status || updatedOrder.deliveryStatus !== order.deliveryStatus) {
+          broadcastPaymentStatus(order.paymentId!, { ...status, order: updatedOrder });
         }
       } catch (err) {
         // Silently fail for individual orders, continue with others
@@ -1390,6 +1421,34 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/admin/orders/:orderId/retry-delivery", requireAdmin, async (req, res) => {
+    const auth = getRequestSession(req);
+    if (!auth) {
+      return res.status(401).json({ error: "Session expired" });
+    }
+
+    try {
+      const order = await storage.retryExhaustedOrderDelivery(req.params.orderId, {
+        userId: auth.session.userId,
+        email: auth.session.email,
+      });
+      if (!order) {
+        return res.status(409).json({
+          error: "Delivery is no longer eligible for a manual retry",
+        });
+      }
+
+      broadcastOrderUpdate("order_updated", order);
+      void fulfillCompletedOrder(order.orderId).catch(error =>
+        console.error(`Manual delivery retry failed for ${order.orderId}:`, error),
+      );
+      res.json({ order, retryStarted: true });
+    } catch (error) {
+      console.error("Error retrying exhausted order delivery:", error);
+      res.status(500).json({ error: "Failed to retry order delivery" });
+    }
+  });
+
   // Get unique users from orders (for admin)
   app.get("/api/admin/users", requireAdmin, async (req, res) => {
     try {
@@ -1441,20 +1500,8 @@ export async function registerRoutes(
   });
 
   // Sync order status from NOWPayments (for admin)
-  app.post("/api/admin/orders/sync-status", async (req, res) => {
+  app.post("/api/admin/orders/sync-status", requireAdmin, async (req, res) => {
     try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader?.startsWith("Bearer ")) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      const token = authHeader.substring(7);
-      const session = sessions.get(token);
-
-      if (!session || session.expiresAt < new Date() || session.role !== "admin") {
-        return res.status(403).json({ error: "Forbidden" });
-      }
-
       if (!nowPaymentsService.isConfigured()) {
         return res.status(400).json({ error: "NOWPayments is not configured" });
       }
@@ -1474,32 +1521,13 @@ export async function registerRoutes(
 
         try {
           const paymentStatus = await nowPaymentsService.getPaymentStatus(order.paymentId);
-          let newStatus = order.status;
-          
-          // Map NOWPayments status to our status
-          const statusMap: Record<string, string> = {
-            'waiting': 'pending',
-            'confirming': 'pending',
-            'confirmed': 'pending',
-            'sending': 'pending',
-            'partially_paid': 'pending',
-            'finished': 'completed',
-            'failed': 'failed',
-            'refunded': 'refunded',
-            'expired': 'expired'
-          };
-          
-          newStatus = statusMap[paymentStatus.payment_status] || order.status;
-          
-          if (newStatus !== order.status) {
-            await storage.updateOrderByOrderId(orderId, { status: newStatus });
-          }
+          const updatedOrder = await applyOrderGatewayStatus(order, paymentStatus.payment_status);
           
           res.json({ 
             success: true, 
             orderId, 
             previousStatus: order.status,
-            newStatus,
+            newStatus: updatedOrder.status,
             nowpaymentsStatus: paymentStatus.payment_status
           });
         } catch (err) {
@@ -1517,28 +1545,12 @@ export async function registerRoutes(
           try {
             const paymentStatus = await nowPaymentsService.getPaymentStatus(order.paymentId!);
             
-            const statusMap: Record<string, string> = {
-              'waiting': 'pending',
-              'confirming': 'pending',
-              'confirmed': 'pending',
-              'sending': 'pending',
-              'partially_paid': 'pending',
-              'finished': 'completed',
-              'failed': 'failed',
-              'refunded': 'refunded',
-              'expired': 'expired'
-            };
-            
-            const newStatus = statusMap[paymentStatus.payment_status] || order.status;
-            
-            if (newStatus !== order.status) {
-              await storage.updateOrderByOrderId(order.orderId, { status: newStatus });
-            }
+            const updatedOrder = await applyOrderGatewayStatus(order, paymentStatus.payment_status);
             
             results.push({
               orderId: order.orderId,
               previousStatus: order.status,
-              newStatus,
+              newStatus: updatedOrder.status,
               nowpaymentsStatus: paymentStatus.payment_status
             });
           } catch (err) {
@@ -1768,7 +1780,7 @@ export async function registerRoutes(
 
   app.patch("/api/orders/:id", requireAdmin, async (req, res) => {
     try {
-      const validatedData = insertOrderSchema.partial().parse(req.body);
+      const validatedData = adminOrderUpdateSchema.parse(req.body);
       const order = await storage.updateOrder(req.params.id, validatedData);
       if (!order) {
         return res.status(404).json({ error: "Order not found" });
@@ -2648,23 +2660,9 @@ export async function registerRoutes(
             );
           }
         } else {
-        const newStatus = payment_status === "finished" ? "completed" 
-          : payment_status === "failed" ? "failed"
-          : payment_status === "expired" ? "expired"
-          : payment_status === "confirming" ? "confirming"
-          : "pending";
-
         const order = await storage.getOrderByOrderId(order_id);
-        
-        // Complete fulfillment (including retrying delivery after stock was claimed).
-        if (newStatus === "completed" && order) {
-          await fulfillCompletedOrder(order_id);
-        } else if (order && order.status !== newStatus) {
-          const updatedOrder = await storage.updateOrderByOrderId(order_id, { status: newStatus });
-          if (updatedOrder) {
-            broadcastOrderUpdate("order_updated", updatedOrder);
-            notifyTelegramOrder(updatedOrder, true);
-          }
+        if (order) {
+          await applyOrderGatewayStatus(order, payment_status);
         }
         }
       }
@@ -3579,29 +3577,9 @@ export async function registerRoutes(
       
       // Sync order status in database if payment status has changed
       if (status.order_id && status.payment_status) {
-        const newStatus = status.payment_status === "finished" ? "completed" 
-          : status.payment_status === "failed" ? "failed"
-          : status.payment_status === "expired" ? "expired"
-          : status.payment_status === "confirming" ? "confirming"
-          : status.payment_status === "sending" ? "confirming"
-          : status.payment_status === "confirmed" ? "confirming"
-          : "pending";
-
         const order = await storage.getOrderByOrderId(status.order_id);
-        
-        // Only process if order exists and status has changed
-        if (order && order.status !== newStatus) {
-          // Complete fulfillment (including retrying delivery after stock was claimed).
-          if (newStatus === "completed") {
-            await fulfillCompletedOrder(status.order_id);
-          } else {
-            // Update status for non-completed states
-            const updatedOrder = await storage.updateOrderByOrderId(status.order_id, { status: newStatus });
-            if (updatedOrder) {
-              broadcastOrderUpdate("order_updated", updatedOrder);
-              notifyTelegramOrder(updatedOrder, true);
-            }
-          }
+        if (order) {
+          await applyOrderGatewayStatus(order, status.payment_status);
         }
       }
       

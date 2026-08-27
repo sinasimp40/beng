@@ -44,8 +44,12 @@ const statusConfig: Record<string, { label: string; color: string; icon: React.R
   confirming: { label: "Confirming", color: "bg-blue-500/20 text-blue-400 border-blue-500/30", icon: <Loader2 className="w-3 h-3 animate-spin" /> },
   completed: { label: "Completed", color: "bg-green-500/20 text-green-400 border-green-500/30", icon: <CheckCircle2 className="w-3 h-3" /> },
   failed: { label: "Failed", color: "bg-red-500/20 text-red-400 border-red-500/30", icon: <XCircle className="w-3 h-3" /> },
+  fulfilling: { label: "Fulfilling", color: "bg-blue-500/20 text-blue-400 border-blue-500/30", icon: <Loader2 className="w-3 h-3 animate-spin" /> },
+  fulfillment_failed: { label: "Fulfillment failed", color: "bg-red-500/20 text-red-400 border-red-500/30", icon: <XCircle className="w-3 h-3" /> },
   expired: { label: "Expired", color: "bg-gray-500/20 text-gray-400 border-gray-500/30", icon: <XCircle className="w-3 h-3" /> },
 };
+
+const MAX_MANUAL_DELIVERY_RETRIES = 3;
 
 export function OrdersTableSkeleton() {
   return (
@@ -72,6 +76,7 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundReason, setRefundReason] = useState("");
+  const [retryOrder, setRetryOrder] = useState<Order | null>(null);
 
   const syncMutation = useMutation({
     mutationFn: async () => {
@@ -125,6 +130,22 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); queryClient.invalidateQueries({ queryKey: ["/api/admin/registered-users"] }); queryClient.invalidateQueries({ queryKey: ["/api/admin/credit-transactions"] }); toast({ title: "Refund issued", description: "The order total was returned as account credit." }); setRefundOrder(null); setRefundReason(""); },
     onError: (e: Error) => toast({ title: "Refund failed", description: e.message, variant: "destructive" }),
+  });
+  const retryDeliveryMutation = useMutation({
+    mutationFn: async () => {
+      if (!retryOrder) throw new Error("No order selected");
+      const res = await apiRequest("POST", `/api/admin/orders/${retryOrder.orderId}/retry-delivery`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({ title: "Delivery retry started", description: "The order has been queued for another bounded email delivery attempt." });
+      setRetryOrder(null);
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({ title: "Could not retry delivery", description: error.message, variant: "destructive" });
+    },
   });
 
   const copyText = (text: string, label: string) => {
@@ -187,7 +208,8 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="confirming">Confirming</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
-              <SelectItem value="failed">Failed</SelectItem>
+               <SelectItem value="failed">Failed</SelectItem>
+               <SelectItem value="fulfillment_failed">Fulfillment failed</SelectItem>
               <SelectItem value="expired">Expired</SelectItem>
             </SelectContent>
           </Select>
@@ -232,6 +254,7 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead className="hidden sm:table-cell">Currency</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Delivery</TableHead>
                 <TableHead className="hidden xl:table-cell">Sent Stock</TableHead>
                 <TableHead className="hidden lg:table-cell">Date</TableHead>
                 <TableHead className="w-12"></TableHead>
@@ -241,6 +264,11 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
               {filteredOrders.map((order) => {
                 const status = statusConfig[order.status] || statusConfig.pending;
                 const canRefund = (order.status === "completed" || order.status === "finished") && !!(order as any).userId && !(order as any).refundedAt;
+                const deliveryStatus = order.deliveryStatus || "pending";
+                const canRetryDelivery =
+                  order.status === "fulfillment_failed" &&
+                  deliveryStatus === "exhausted" &&
+                  order.deliveryRetryCount < MAX_MANUAL_DELIVERY_RETRIES;
                 return (
                   <TableRow key={order.id}>
                     <TableCell>
@@ -291,6 +319,46 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
                         {status.label}
                       </Badge>
                     </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Badge
+                          variant="outline"
+                          className={
+                            deliveryStatus === "exhausted"
+                              ? "border-red-500/40 text-red-400"
+                              : deliveryStatus === "sent"
+                                ? "border-green-500/40 text-green-400"
+                                : deliveryStatus === "sending"
+                                  ? "border-blue-500/40 text-blue-400"
+                                  : "text-muted-foreground"
+                          }
+                        >
+                          {deliveryStatus === "exhausted"
+                            ? "Delivery exhausted"
+                            : deliveryStatus === "sent"
+                              ? "Delivery sent"
+                              : deliveryStatus === "sending"
+                                ? "Email sending"
+                                : deliveryStatus === "failed"
+                                  ? "Delivery retrying"
+                                  : "Delivery queued"}
+                        </Badge>
+                        <div className="text-xs text-muted-foreground">
+                          {order.deliveryAttempts} automatic attempt{order.deliveryAttempts === 1 ? "" : "s"}
+                          {order.deliveryRetryCount > 0 ? ` · ${order.deliveryRetryCount}/${MAX_MANUAL_DELIVERY_RETRIES} manual reset${order.deliveryRetryCount === 1 ? "" : "s"}` : ""}
+                        </div>
+                        {order.deliveryLastError && (
+                          <div className="max-w-[220px] truncate text-xs text-red-400" title={order.deliveryLastError}>
+                            {order.deliveryLastError}
+                          </div>
+                        )}
+                        {order.deliveryLastRetriedAt && (
+                          <div className="text-xs text-muted-foreground" title={order.deliveryLastRetriedByEmail || undefined}>
+                            Last reset {formatDate(order.deliveryLastRetriedAt)}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell className="hidden xl:table-cell">
                       {order.sentStock ? (
                         <div className="flex items-center gap-2">
@@ -316,6 +384,43 @@ export function OrdersTable({ orders, isLoading }: OrdersTableProps) {
                       </span>
                     </TableCell>
                     <TableCell>
+                      {canRetryDelivery && (
+                        <AlertDialog open={retryOrder?.id === order.id} onOpenChange={(open) => !open && setRetryOrder(null)}>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mr-2 gap-1 border-red-500/40 text-red-400 hover:bg-red-500/10"
+                              onClick={() => setRetryOrder(order)}
+                              data-testid={`button-retry-delivery-${order.id}`}
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              Retry delivery
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Retry order delivery?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This resets the exhausted email delivery for order "{order.orderId}" and starts another bounded attempt window. It does not charge the customer or restore stock. The action will be recorded with your admin identity.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel data-testid="button-cancel-retry-delivery">Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={(e) => { e.preventDefault(); retryDeliveryMutation.mutate(); }}
+                                disabled={retryDeliveryMutation.isPending}
+                                data-testid="button-confirm-retry-delivery"
+                              >
+                                {retryDeliveryMutation.isPending ? "Starting…" : "Start retry"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                      {order.status === "fulfillment_failed" && deliveryStatus === "exhausted" && !canRetryDelivery && (
+                        <span className="mr-2 text-xs text-muted-foreground">Manual retry limit reached</span>
+                      )}
                       {canRefund && <Button variant="outline" size="sm" className="mr-2 gap-1" onClick={() => { setRefundOrder(order); setRefundReason(""); }} data-testid={`button-refund-credit-${order.id}`}><WalletCards className="h-3.5 w-3.5" />Refund</Button>}
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
