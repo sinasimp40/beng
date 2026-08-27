@@ -2079,6 +2079,30 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/payments/minimums", async (_req, res) => {
+    if (!nowPaymentsService.isConfigured()) {
+      return res.status(400).json({ error: "Payment gateway not configured" });
+    }
+    const currencies = ["btc", "eth", "usdt", "ltc", "sol", "bnb", "xrp", "doge", "xmr"];
+    const results = await Promise.allSettled(
+      currencies.map(currency => nowPaymentsService.getMinimumPaymentAmount(currency, "usd")),
+    );
+    const minimums = Object.fromEntries(currencies.map((currency, index) => {
+      const result = results[index];
+      return [
+        currency,
+        result.status === "fulfilled"
+          ? {
+              minimumUsd: Math.ceil(result.value.minimumFiatAmount * 100) / 100,
+              minimumCrypto: result.value.minimumCryptoAmount,
+            }
+          : null,
+      ];
+    }));
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=240");
+    res.json({ minimums });
+  });
+
   app.post("/api/credit/topups", paymentLimiter, async (req, res) => {
     const auth = getRequestSession(req);
     if (!auth) return res.status(401).json({ error: "Not authenticated" });
@@ -2095,6 +2119,21 @@ export async function registerRoutes(
       const user = await storage.getUser(auth.session.userId);
       if (!user || user.banned === 1) {
         return res.status(403).json({ error: "Account is not eligible for top-ups" });
+      }
+      try {
+        const minimum = await nowPaymentsService.getMinimumPaymentAmount(
+          input.payCurrency.toLowerCase(),
+          "usd",
+        );
+        const minimumUsd = Math.ceil(minimum.minimumFiatAmount * 100) / 100;
+        if (input.amountCents < Math.ceil(minimumUsd * 100)) {
+          return res.status(400).json({
+            error: `Minimum top-up for ${input.payCurrency.toUpperCase()} is $${minimumUsd.toFixed(2)}.`,
+            minimumUsd,
+          });
+        }
+      } catch (minimumError) {
+        console.warn("Could not preflight top-up minimum:", minimumError);
       }
       const creation = await creditStorage.createTopup({
         userId: user.id,
@@ -2377,6 +2416,22 @@ export async function registerRoutes(
 
       if (!nowPaymentsService.isConfigured()) {
         return res.status(400).json({ error: "Payment gateway not configured" });
+      }
+
+      try {
+        const minimum = await nowPaymentsService.getMinimumPaymentAmount(
+          currency.toLowerCase(),
+          "usd",
+        );
+        const minimumUsd = Math.ceil(minimum.minimumFiatAmount * 100) / 100;
+        if (authoritativeAmount < minimumUsd) {
+          return res.status(400).json({
+            error: `The order total is below the $${minimumUsd.toFixed(2)} minimum for ${currency.toUpperCase()}. Choose another cryptocurrency.`,
+            minimumUsd,
+          });
+        }
+      } catch (minimumError) {
+        console.warn("Could not preflight checkout minimum:", minimumError);
       }
 
       const checkoutEmail = auth ? auth.session.email : email;

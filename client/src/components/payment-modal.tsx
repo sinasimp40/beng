@@ -32,6 +32,7 @@ import {
 import { SiBitcoin, SiEthereum, SiLitecoin, SiDogecoin, SiMonero, SiRipple, SiBinance, SiSolana } from "react-icons/si";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { isBelowCryptoMinimum, useCryptoMinimums } from "@/hooks/use-crypto-minimums";
 import QRCode from "react-qr-code";
 
 interface ExistingOrder {
@@ -204,6 +205,20 @@ export function PaymentModal({
     : isCartCheckout
       ? cartItems.reduce((total, item) => total + item.price * item.quantity, 0)
       : (product ? product.price * quantity : 0);
+  const { data: minimumData, isLoading: minimumsLoading } = useCryptoMinimums(
+    open && step === "form",
+  );
+  const selectedMinimum = minimumData?.minimums[selectedCrypto];
+  const selectedCryptoUnavailable = isBelowCryptoMinimum(totalAmount, selectedMinimum);
+
+  useEffect(() => {
+    if (!minimumData || paymentMethod !== "crypto" || !selectedCryptoUnavailable) return;
+    const nextCrypto = cryptoOptions.find(option => {
+      const minimum = minimumData.minimums[option.id];
+      return minimum && !isBelowCryptoMinimum(totalAmount, minimum);
+    });
+    if (nextCrypto) setSelectedCrypto(nextCrypto.id);
+  }, [minimumData, paymentMethod, selectedCryptoUnavailable, totalAmount]);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -380,6 +395,14 @@ export function PaymentModal({
       toast({
         title: "Invalid email",
         description: "Please enter a valid email address",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (paymentMethod === "crypto" && selectedCryptoUnavailable) {
+      toast({
+        title: `${selectedCrypto.toUpperCase()} is unavailable for this order`,
+        description: `The live minimum is $${selectedMinimum!.minimumUsd.toFixed(2)}. Choose another cryptocurrency.`,
         variant: "destructive",
       });
       return;
@@ -618,20 +641,28 @@ export function PaymentModal({
                     <span className="flex items-center gap-3"><CreditCard className="h-5 w-5 text-primary" /><span><span className="block text-sm font-medium">Account credit</span><span className="text-xs text-gray-500">Available: ${(((user as any).creditBalanceCents || 0) / 100).toFixed(2)}</span></span></span>
                     {((user as any).creditBalanceCents || 0) < Math.round(totalAmount * 100) && <span className="text-xs text-destructive">Insufficient balance</span>}
                   </button>}
-                  {cryptoOptions.map((crypto) => (
+                  {cryptoOptions.map((crypto) => {
+                    const minimum = minimumData?.minimums[crypto.id];
+                    const unavailable = isBelowCryptoMinimum(totalAmount, minimum);
+                    return (
                     <button
                       key={crypto.id}
-                       onClick={() => { setSelectedCrypto(crypto.id); setPaymentMethod("crypto"); }}
+                       type="button"
+                       disabled={unavailable}
+                       onClick={() => { if (!unavailable) { setSelectedCrypto(crypto.id); setPaymentMethod("crypto"); } }}
+                       aria-label={unavailable ? `${crypto.name} unavailable below $${minimum!.minimumUsd.toFixed(2)}` : crypto.name}
                       className={`
                         relative flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all duration-200
-                        ${selectedCrypto === crypto.id 
+                         ${unavailable
+                           ? "opacity-35 cursor-not-allowed bg-gray-100 dark:bg-white/[0.01] border-gray-200 dark:border-white/[0.04]"
+                           : selectedCrypto === crypto.id
                           ? "bg-primary/[0.08] border-primary/30 shadow-[0_0_20px_-4px] shadow-primary/20" 
                           : "bg-gray-50 dark:bg-white/[0.02] border-gray-200 dark:border-white/[0.06] hover-elevate"
                         }
                       `}
                       data-testid={`button-crypto-${crypto.id}`}
                     >
-                      {selectedCrypto === crypto.id && (
+                       {selectedCrypto === crypto.id && !unavailable && (
                         <div className="absolute top-1.5 right-1.5">
                           <div className="relative flex items-center justify-center w-2.5 h-2.5">
                             <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-40 animate-ping" />
@@ -645,14 +676,22 @@ export function PaymentModal({
                       <span className={`text-[11px] font-medium transition-colors ${selectedCrypto === crypto.id ? "text-gray-900 dark:text-white" : "text-gray-500 dark:text-[hsl(0_0%_45%)]"}`}>
                         {crypto.name}
                       </span>
+                       {minimum && <span className="text-[9px] text-gray-400">Min ${minimum.minimumUsd.toFixed(2)}</span>}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
+                 <p className="text-[11px] text-gray-400">
+                   {minimumsLoading ? "Checking live network minimums…" : "Currencies above this order amount are disabled automatically."}
+                 </p>
               </div>
 
               <Button
                 onClick={handleCreatePayment}
-                disabled={paymentMethod === "credit" && ((user as any)?.creditBalanceCents || 0) < Math.round(totalAmount * 100)}
+                disabled={
+                  (paymentMethod === "credit" && ((user as any)?.creditBalanceCents || 0) < Math.round(totalAmount * 100)) ||
+                  (paymentMethod === "crypto" && (minimumsLoading || selectedCryptoUnavailable))
+                }
                 size="lg"
                 className="w-full gap-2.5 bg-primary text-white font-bold uppercase tracking-wider text-sm shadow-lg shadow-primary/25"
                 data-testid="button-create-payment"

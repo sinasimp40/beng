@@ -63,7 +63,17 @@ export interface CurrencyInfo {
   network_precision?: string;
 }
 
+export interface MinimumPaymentAmount {
+  currencyFrom?: string;
+  currencyTo: string;
+  minimumCryptoAmount: number;
+  fiatEquivalent: string;
+  minimumFiatAmount: number;
+}
+
 export class NowPaymentsService {
+  private minimumAmountCache = new Map<string, { value: MinimumPaymentAmount; expiresAt: number }>();
+
   private getApiKey(): string | undefined {
     return process.env.NOWPAYMENTS_API_KEY;
   }
@@ -161,14 +171,28 @@ export class NowPaymentsService {
     return response.json();
   }
 
-  async getMinimumPaymentAmount(currencyFrom: string, currencyTo: string): Promise<number> {
+  async getMinimumPaymentAmount(
+    currencyTo: string,
+    fiatEquivalent = "usd",
+  ): Promise<MinimumPaymentAmount> {
     const apiKey = this.getApiKey();
     if (!apiKey) {
       throw new Error("NOWPayments API key not configured");
     }
 
+    const cacheKey = `${currencyTo.toLowerCase()}:${fiatEquivalent.toLowerCase()}`;
+    const cached = this.minimumAmountCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const params = new URLSearchParams({
+      currency_from: currencyTo.toLowerCase(),
+      currency_to: currencyTo.toLowerCase(),
+      fiat_equivalent: fiatEquivalent.toLowerCase(),
+    });
     const response = await fetch(
-      `${NOWPAYMENTS_API_URL}/min-amount?currency_from=${currencyFrom}&currency_to=${currencyTo}`,
+      `${NOWPAYMENTS_API_URL}/min-amount?${params.toString()}`,
       {
         headers: {
           "x-api-key": apiKey,
@@ -181,7 +205,24 @@ export class NowPaymentsService {
     }
 
     const data = await response.json();
-    return data.min_amount;
+    const value: MinimumPaymentAmount = {
+      currencyFrom: data.currency_from,
+      currencyTo: data.currency_to || currencyTo.toLowerCase(),
+      minimumCryptoAmount: Number(data.min_amount),
+      fiatEquivalent: fiatEquivalent.toLowerCase(),
+      minimumFiatAmount: Number(data.fiat_equivalent_amount ?? data.fiat_equivalent),
+    };
+    if (
+      !Number.isFinite(value.minimumCryptoAmount) ||
+      !Number.isFinite(value.minimumFiatAmount)
+    ) {
+      throw new Error("NOWPayments returned an invalid minimum amount");
+    }
+    this.minimumAmountCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    });
+    return value;
   }
 
   verifyIpnSignature(payload: string, signature: string): boolean {
