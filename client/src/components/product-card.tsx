@@ -63,10 +63,11 @@ function useAnimatedCount(target: number, countDuration = 2000, holdDuration = 5
 interface ProductCardProps {
   product: ProductWithVariants;
   onBuyNow: (product: ProductWithVariants) => void;
+  onAddToCart: (product: ProductWithVariants) => void;
   index?: number;
 }
 
-export function ProductCard({ product, onBuyNow, index = 0 }: ProductCardProps) {
+export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: ProductCardProps) {
   const hasImage = product.imageUrl && product.imageUrl.length > 0;
   const hasVariants = product.variants && product.variants.length > 0;
   const minPrice = hasVariants
@@ -247,20 +248,29 @@ export function ProductCard({ product, onBuyNow, index = 0 }: ProductCardProps) 
                 {minPrice.toFixed(2)}
               </span>
             </span>
-            <button
-              onClick={() => onBuyNow(product)}
-              className="relative group/btn overflow-hidden flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider text-white transition-all duration-300"
-              data-testid={`button-buy-${product.id}`}
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-primary via-primary/80 to-primary rounded-md" />
-              <div className="absolute inset-0 bg-gradient-to-r from-primary via-white/20 to-primary opacity-0 group-hover/btn:opacity-100 transition-opacity duration-500" />
-              <div
-                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"
-              />
-              <div className="absolute inset-[1px] rounded-[5px] bg-gradient-to-b from-white/10 to-transparent pointer-events-none" />
-              <ShoppingCart className="relative w-3 h-3" />
-              <span className="relative">Buy</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => onAddToCart(product)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider text-primary border border-primary/30 bg-primary/5 hover:bg-primary/15 transition-colors"
+                data-testid={`button-add-to-cart-${product.id}`}
+              >
+                <ShoppingCart className="w-3 h-3" />
+                <span>Cart</span>
+              </button>
+              <button
+                onClick={() => onBuyNow(product)}
+                className="relative group/btn overflow-hidden flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider text-white transition-all duration-300"
+                data-testid={`button-buy-${product.id}`}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-primary via-primary/80 to-primary rounded-md" />
+                <div className="absolute inset-0 bg-gradient-to-r from-primary via-white/20 to-primary opacity-0 group-hover/btn:opacity-100 transition-opacity duration-500" />
+                <div
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700"
+                />
+                <div className="absolute inset-[1px] rounded-[5px] bg-gradient-to-b from-white/10 to-transparent pointer-events-none" />
+                <span className="relative">Buy</span>
+              </button>
+            </div>
           </div>
         </div>
         

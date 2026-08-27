@@ -6,6 +6,7 @@ interface ProductGridProps {
   products: ProductWithVariants[];
   isLoading?: boolean;
   onBuyNow: (product: ProductWithVariants) => void;
+  onAddToCart: (product: ProductWithVariants) => void;
 }
 
 function ProductCardSkeleton() {
@@ -26,7 +27,7 @@ function ProductCardSkeleton() {
   );
 }
 
-export function ProductGrid({ products, isLoading, onBuyNow }: ProductGridProps) {
+export function ProductGrid({ products, isLoading, onBuyNow, onAddToCart }: ProductGridProps) {
   if (isLoading) {
     return (
       <div className="flex flex-wrap justify-center gap-4 sm:gap-6 w-full">
@@ -59,8 +60,8 @@ export function ProductGrid({ products, isLoading, onBuyNow }: ProductGridProps)
       data-testid="product-grid"
     >
       {products.map((product, index) => (
-        <div key={product.id} className="w-full sm:w-[calc(50%-0.75rem)] lg:w-[calc(25%-1.125rem)]">
-          <ProductCard product={product} onBuyNow={onBuyNow} index={index} />
+          <div key={product.id} className="w-full sm:w-[calc(50%-0.75rem)] lg:w-[calc(25%-1.125rem)]">
+           <ProductCard product={product} onBuyNow={onBuyNow} onAddToCart={onAddToCart} index={index} />
         </div>
       ))}
     </div>

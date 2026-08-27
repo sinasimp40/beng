@@ -1,5 +1,5 @@
 import { db, pool } from "../db";
-import { users, products, orders, emailTemplates, settings, passwordResetTokens, reviews } from "@shared/schema";
+import { users, products, orders, orderItems, emailTemplates, settings, passwordResetTokens, reviews } from "@shared/schema";
 import type { BackupProgress, DatabaseExport } from "@shared/schema";
 import { WebSocket } from "ws";
 import crypto from "crypto";
@@ -9,6 +9,7 @@ const TABLES = [
   { name: 'users', table: users },
   { name: 'products', table: products },
   { name: 'orders', table: orders },
+  { name: 'orderItems', table: orderItems },
   { name: 'emailTemplates', table: emailTemplates },
   { name: 'settings', table: settings },
   { name: 'passwordResetTokens', table: passwordResetTokens },
@@ -449,12 +450,34 @@ export async function importDatabase(
                 payAmount: orderRow.payAmount,
                 email: orderRow.email,
                 sentStock: orderRow.sentStock,
+                deliveryStatus: orderRow.deliveryStatus || 'pending',
+                deliveryAttemptedAt: orderRow.deliveryAttemptedAt || null,
                 ipAddress: orderRow.ipAddress,
               }).where(eq(orders.id, orderRow.id));
               console.log(`Updated existing order: ${orderRow.orderId}`);
             } else {
               await db.insert(orders).values(orderRow);
               console.log(`Inserted new order: ${orderRow.orderId}`);
+            }
+          } else if (tableName === 'orderItems') {
+            const orderItemRow = row as any;
+            const existing = await db.select().from(orderItems).where(eq(orderItems.id, orderItemRow.id));
+            if (existing.length > 0) {
+              await db.update(orderItems).set({
+                orderId: orderItemRow.orderId,
+                productId: orderItemRow.productId,
+                productName: orderItemRow.productName,
+                quantity: orderItemRow.quantity,
+                unitPrice: orderItemRow.unitPrice,
+                fulfillmentStatus: orderItemRow.fulfillmentStatus || 'pending',
+                fulfilledStock: orderItemRow.fulfilledStock || null,
+              }).where(eq(orderItems.id, orderItemRow.id));
+            } else {
+              await db.insert(orderItems).values({
+                ...orderItemRow,
+                fulfillmentStatus: orderItemRow.fulfillmentStatus || 'pending',
+                fulfilledStock: orderItemRow.fulfilledStock || null,
+              });
             }
           } else if (tableName === 'emailTemplates') {
             // Email templates - check by id and upsert

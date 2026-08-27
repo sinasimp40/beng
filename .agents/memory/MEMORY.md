@@ -1,0 +1,1 @@
+- [Digital fulfillment integrity](digital-fulfillment-integrity.md) — claim stock and email dispatch through separate durable database ownership steps.

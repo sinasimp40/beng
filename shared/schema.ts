@@ -303,7 +303,7 @@ export type ProductWithVariants = Product & { variants?: Product[] };
 // Orders table
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  orderId: text("order_id").notNull(),
+  orderId: text("order_id").notNull().unique(),
   productId: varchar("product_id").notNull(),
   productName: text("product_name"),
   quantity: integer("quantity").notNull().default(1),
@@ -316,8 +316,30 @@ export const orders = pgTable("orders", {
   email: text("email"),
   createdAt: text("created_at").notNull().default(sql`now()`),
   sentStock: text("sent_stock"),
+  deliveryStatus: text("delivery_status").notNull().default("pending"),
+  deliveryAttemptedAt: text("delivery_attempted_at"),
   ipAddress: text("ip_address"),
 });
+
+// Individual products included in a payment. Existing orders without rows in
+// this table continue to use the legacy single-product fields above.
+export const orderItems = pgTable("order_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: text("order_id").notNull().references(() => orders.orderId, { onDelete: "cascade" }),
+  productId: varchar("product_id").notNull(),
+  productName: text("product_name").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+  unitPrice: real("unit_price").notNull(),
+  fulfillmentStatus: text("fulfillment_status").notNull().default("pending"),
+  fulfilledStock: text("fulfilled_stock"),
+});
+
+export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
+  id: true,
+});
+
+export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
+export type OrderItem = typeof orderItems.$inferSelect;
 
 // Email templates table
 export const emailTemplates = pgTable("email_templates", {

@@ -17,6 +17,7 @@ interface ProductDetailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onProceedToPayment: (product: Product, quantity: number) => void;
+  onAddToCart: (product: Product, quantity: number, variantLabel?: string) => void;
 }
 
 export function ProductDetailModal({
@@ -24,6 +25,7 @@ export function ProductDetailModal({
   open,
   onOpenChange,
   onProceedToPayment,
+  onAddToCart,
 }: ProductDetailModalProps) {
   const [quantity, setQuantity] = useState(1);
   const [showCloseWarning, setShowCloseWarning] = useState(false);
@@ -93,6 +95,11 @@ export function ProductDetailModal({
 
   const handleProceed = () => {
     onProceedToPayment(activeProduct, quantity);
+    setQuantity(1);
+  };
+
+  const handleAddToCart = () => {
+    onAddToCart(activeProduct, quantity, hasVariants ? getOptionLabel(activeProduct) : undefined);
     setQuantity(1);
   };
 
@@ -279,16 +286,29 @@ export function ProductDetailModal({
                 </div>
               </div>
 
-              <Button
-                size="lg"
-                onClick={handleProceed}
-                disabled={!inStock}
-                className="w-full gap-2.5 bg-primary text-white font-bold uppercase tracking-wider text-sm"
-                data-testid="button-proceed-to-payment"
-              >
-                <ShoppingCart className="w-4 h-4" />
-                {inStock ? "Buy Now" : "Out of Stock"}
-              </Button>
+              <div className="grid grid-cols-2 gap-2.5">
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={handleAddToCart}
+                  disabled={!inStock}
+                  className="gap-2 border-primary/30 text-primary hover:bg-primary/10 font-bold uppercase tracking-wider text-xs"
+                  data-testid="button-add-to-cart"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  Add to cart
+                </Button>
+                <Button
+                  size="lg"
+                  onClick={handleProceed}
+                  disabled={!inStock}
+                  className="gap-2.5 bg-primary text-white font-bold uppercase tracking-wider text-xs"
+                  data-testid="button-proceed-to-payment"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  {inStock ? "Buy Now" : "Out of Stock"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

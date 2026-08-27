@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Product, ProductWithVariants } from "@shared/schema";
 import { Header } from "@/components/header";
@@ -11,6 +11,8 @@ import { PaymentModal } from "@/components/payment-modal";
 import { ParticleBackground } from "@/components/particle-background";
 import { UnifiedSearchBar } from "@/components/unified-search-bar";
 import { SocialWidget } from "@/components/social-widget";
+import { useCart, type CartItem } from "@/lib/cart";
+import { useToast } from "@/hooks/use-toast";
 import { useProductUpdates } from "@/hooks/use-product-updates";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -32,6 +34,9 @@ export default function Home() {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [purchaseQuantity, setPurchaseQuantity] = useState(1);
+  const [checkoutItems, setCheckoutItems] = useState<CartItem[]>([]);
+  const { addItem, clearCart, syncProducts } = useCart();
+  const { toast } = useToast();
 
   // Enable real-time product updates via WebSocket
   useProductUpdates();
@@ -39,6 +44,10 @@ export default function Home() {
   const { data: products = [], isLoading: productsLoading } = useQuery<ProductWithVariants[]>({
     queryKey: ["/api/products"],
   });
+
+  useEffect(() => {
+    syncProducts(products);
+  }, [products, syncProducts]);
 
   const filteredProducts = useMemo(() => {
     const filtered = products.filter((product) => {
@@ -94,15 +103,44 @@ export default function Home() {
     setDetailModalOpen(true);
   };
 
+  const handleAddToCart = (product: ProductWithVariants) => {
+    setSelectedProduct(product);
+    setActiveVariant(null);
+    setDetailModalOpen(true);
+  };
+
+  const handleProductAddedToCart = (product: Product, quantity: number, variantLabel?: string) => {
+    addItem(product, quantity, variantLabel);
+    setDetailModalOpen(false);
+    toast({
+      title: "Added to cart",
+      description: `${product.name} is ready when you are.`,
+      duration: 3000,
+    });
+  };
+
   const handleProceedToPayment = (product: Product, quantity: number) => {
+    setCheckoutItems([]);
     setActiveVariant(product);
     setPurchaseQuantity(quantity);
     setDetailModalOpen(false);
     setPaymentModalOpen(true);
   };
 
+  const handleCartCheckout = (items: CartItem[]) => {
+    setCheckoutItems(items);
+    setSelectedProduct(null);
+    setActiveVariant(null);
+    setPurchaseQuantity(1);
+    setPaymentModalOpen(true);
+  };
+
   const handlePaymentComplete = (paymentId: string) => {
     console.log("Payment completed:", paymentId);
+    if (checkoutItems.length > 0) {
+      clearCart();
+      setCheckoutItems([]);
+    }
     // Don't close modal - let the success screen show first
     // Modal will be closed when user clicks "Done" button
   };
@@ -111,7 +149,7 @@ export default function Home() {
     <div className="min-h-screen bg-background animated-gradient relative">
       <ParticleBackground />
       <div className="relative" style={{ zIndex: 2 }}>
-        <Header searchQuery={searchQuery} onSearchChange={handleSearchChange} showSearch={false} />
+        <Header searchQuery={searchQuery} onSearchChange={handleSearchChange} showSearch={false} onCartCheckout={handleCartCheckout} />
 
         <main className="px-3 sm:px-4 md:px-6 py-4 sm:py-6 pb-20 sm:pb-6">
         <AnnouncementBar />
@@ -137,6 +175,7 @@ export default function Home() {
           products={paginatedProducts}
           isLoading={productsLoading}
           onBuyNow={handleBuyNow}
+          onAddToCart={handleAddToCart}
         />
 
         {totalPages > 1 && (
@@ -180,13 +219,15 @@ export default function Home() {
         open={detailModalOpen}
         onOpenChange={setDetailModalOpen}
         onProceedToPayment={handleProceedToPayment}
+        onAddToCart={handleProductAddedToCart}
       />
       <PaymentModal
-        product={activeVariant || selectedProduct}
+        product={checkoutItems.length > 0 ? null : (activeVariant || selectedProduct)}
         quantity={purchaseQuantity}
         open={paymentModalOpen}
         onOpenChange={setPaymentModalOpen}
         onPaymentComplete={handlePaymentComplete}
+        cartItems={checkoutItems}
       />
       <SocialWidget />
     </div>

@@ -15,7 +15,9 @@ import { User, Package, ShoppingBag, LogOut, ArrowLeft, Search, Filter, Eye, Eye
 import { useOrderUpdates } from "@/hooks/use-order-updates";
 import { useToast } from "@/hooks/use-toast";
 import { PaymentModal } from "@/components/payment-modal";
-import type { Order } from "@shared/schema";
+import type { Order, OrderItem } from "@shared/schema";
+
+type DashboardOrder = Order & { items?: OrderItem[] };
 
 export default function Dashboard() {
   const { user, token, logout, isAdmin, sessionInvalidated, isLoading: isAuthLoading } = useAuth();
@@ -24,7 +26,7 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [visibleStock, setVisibleStock] = useState<Record<string, boolean>>({});
   const [copiedStock, setCopiedStock] = useState<string | null>(null);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<DashboardOrder | null>(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -63,7 +65,7 @@ export default function Dashboard() {
 
   useOrderUpdates(user?.email);
 
-  const { data: orders, isLoading } = useQuery<Order[]>({
+  const { data: orders, isLoading } = useQuery<DashboardOrder[]>({
     queryKey: ["/api/auth/orders"],
     queryFn: async () => {
       const response = await fetch("/api/auth/orders", {
@@ -155,9 +157,11 @@ export default function Dashboard() {
     if (!orders) return [];
     return orders.filter((order) => {
       const productName = order.productName || "";
+      const lineNames = order.items?.map(item => item.productName).join(" ") || "";
       const orderId = order.orderId || "";
       const matchesSearch = 
         productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        lineNames.toLowerCase().includes(searchQuery.toLowerCase()) ||
         orderId.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesStatus = statusFilter === "all" || order.status === statusFilter;
       return matchesSearch && matchesStatus;
@@ -166,7 +170,7 @@ export default function Dashboard() {
 
   const [checkingStock, setCheckingStock] = useState<string | null>(null);
 
-  const handleOrderClick = async (order: Order) => {
+  const handleOrderClick = async (order: DashboardOrder) => {
     const noPayStatuses = ["expired", "refunded"];
     if (noPayStatuses.includes(order.status)) {
       setSelectedOrder(order);
@@ -388,8 +392,18 @@ export default function Dashboard() {
                           <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center">
                             <Package className="w-5 h-5 text-primary" />
                           </div>
-                          <div>
-                            <p className="font-medium">{order.productName}</p>
+                          <div className="min-w-0">
+                            {order.items && order.items.length > 1 ? (
+                              <div className="space-y-0.5">
+                                {order.items.map(item => (
+                                  <p key={item.id} className="font-medium truncate">
+                                    {item.productName} <span className="text-primary text-sm">×{item.quantity}</span>
+                                  </p>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="font-medium">{order.productName}</p>
+                            )}
                             <p className="text-sm text-muted-foreground">
                               Order: {order.orderId}
                             </p>
@@ -501,6 +515,11 @@ export default function Dashboard() {
           payAmount: selectedOrder.payAmount,
           sentStock: selectedOrder.sentStock,
           email: selectedOrder.email,
+          items: selectedOrder.items?.map(item => ({
+            productName: item.productName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          })),
         } : null}
       />
 

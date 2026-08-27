@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SearchBar } from "@/components/search-bar";
 import { AuthModal } from "@/components/auth-modal";
+import { CartDrawer } from "@/components/cart-drawer";
+import type { CartItem } from "@/lib/cart";
 import { useAuth } from "@/lib/auth";
 import { useShopSettings } from "@/hooks/use-shop-settings";
 import { Store, Settings, LogIn, UserPlus, User, LogOut, Sparkles, MessageSquareQuote, Activity } from "lucide-react";
@@ -12,12 +14,14 @@ interface HeaderProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   showSearch?: boolean;
+  onCartCheckout?: (items: CartItem[]) => void;
 }
 
 export function Header({
   searchQuery,
   onSearchChange,
   showSearch = true,
+  onCartCheckout,
 }: HeaderProps) {
   const [location, setLocation] = useLocation();
   const isAdminPage = location.startsWith("/admin");
@@ -83,6 +87,7 @@ export function Header({
 
             <div className="flex items-center gap-0.5 sm:gap-2">
               <ThemeToggle />
+              {onCartCheckout && <CartDrawer onCheckout={onCartCheckout} />}
               <Link href="/reviews">
                 <Button 
                   variant="ghost" 

@@ -459,19 +459,25 @@
 /* Google reCAPTCHA creates elements with very high z-index that need to be above dialog overlays */
 iframe[src*="recaptcha"],
 iframe[title*="recaptcha"],
-div[style*="z-index: 2000000000"],
-div[style*="z-index: 1000000000"],
-div[style*="z-index: 9999999"],
-div[style*="z-index:2000000000"],
-div[style*="z-index:1000000000"] {
+div[style*="z-index: 2000000000"]:has(iframe[src*="recaptcha"]),
+div[style*="z-index: 1000000000"]:has(iframe[src*="recaptcha"]),
+div[style*="z-index: 9999999"]:has(iframe[src*="recaptcha"]),
+div[style*="z-index:2000000000"]:has(iframe[src*="recaptcha"]),
+div[style*="z-index:1000000000"]:has(iframe[src*="recaptcha"]) {
   z-index: 2147483647 !important;
   pointer-events: auto !important;
 }
 
-/* Target all Google reCAPTCHA containers specifically */
-body > div:not([data-radix-portal]):not([class]) {
+/* Target only containers that actually host a Google reCAPTCHA iframe. */
+body > div:not([data-radix-portal]):not([class]):has(iframe[src*="recaptcha"]) {
   z-index: 2147483647 !important;
   pointer-events: auto !important;
+}
+
+/* Hidden reCAPTCHA containers must not cover the storefront between challenges. */
+body > div:not([data-radix-portal]):not([class]):has(iframe[src*="recaptcha"])[aria-hidden="true"],
+body > div:not([data-radix-portal]):not([class]):has(iframe[src*="recaptcha"])[style*="visibility: hidden"] {
+  pointer-events: none !important;
 }
 
 /* Target the reCAPTCHA challenge iframe container specifically */
@@ -482,14 +488,14 @@ body > div > div > iframe[title*="recaptcha"] {
 }
 
 /* Ensure reCAPTCHA challenge overlay and content are clickable */
-div[style*="visibility: visible"][style*="position: fixed"] {
+div[style*="visibility: visible"][style*="position: fixed"]:has(iframe[src*="recaptcha"]) {
   pointer-events: auto !important;
   z-index: 2147483647 !important;
 }
 
 /* Google reCAPTCHA challenge wrapper - uses inline styles with very high z-index */
-body > div[style*="position: absolute"][style*="z-index"],
-body > div[style*="position: fixed"][style*="z-index"] {
+body > div[style*="position: absolute"][style*="z-index"]:has(iframe[src*="recaptcha"]),
+body > div[style*="position: fixed"][style*="z-index"]:has(iframe[src*="recaptcha"]) {
   z-index: 2147483647 !important;
   pointer-events: auto !important;
 }

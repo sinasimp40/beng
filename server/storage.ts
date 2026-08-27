@@ -5,6 +5,8 @@ import {
   type InsertProduct,
   type Order,
   type InsertOrder,
+  type OrderItem,
+  type InsertOrderItem,
   type EmailTemplate,
   type InsertEmailTemplate,
   type PasswordResetToken,
@@ -16,13 +18,14 @@ import {
   users,
   products,
   orders,
+  orderItems,
   emailTemplates,
   settings,
   passwordResetTokens,
   reviews,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, sql } from "drizzle-orm";
+import { and, eq, desc, inArray, sql } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -47,9 +50,18 @@ export interface IStorage {
   getOrder(id: string): Promise<Order | undefined>;
   getOrderByOrderId(orderId: string): Promise<Order | undefined>;
   createOrder(order: InsertOrder): Promise<Order>;
+  createOrderWithItems(order: InsertOrder, items: InsertOrderItem[]): Promise<Order>;
+  attachPaymentToOrder(orderId: string, payment: Partial<InsertOrder>): Promise<Order | undefined>;
   updateOrder(id: string, order: Partial<InsertOrder>): Promise<Order | undefined>;
   updateOrderByOrderId(orderId: string, order: Partial<InsertOrder>): Promise<Order | undefined>;
   deleteOrder(id: string): Promise<boolean>;
+  createOrderItem(item: InsertOrderItem): Promise<OrderItem>;
+  getOrderItemsByOrderId(orderId: string): Promise<OrderItem[]>;
+  deleteOrderItemsByOrderIds(orderIds: string[]): Promise<void>;
+  claimOrderStock(orderId: string): Promise<{ order: Order; productIds: string[] } | null>;
+  claimOrderDelivery(orderId: string): Promise<Order | undefined>;
+  failOrderDelivery(orderId: string): Promise<Order | undefined>;
+  completeOrderDelivery(orderId: string): Promise<Order | undefined>;
 
   // Statistics
   getStatistics(): Promise<Statistics>;
@@ -62,9 +74,6 @@ export interface IStorage {
   createEmailTemplate(template: InsertEmailTemplate): Promise<EmailTemplate>;
   updateEmailTemplate(id: string, template: Partial<InsertEmailTemplate>): Promise<EmailTemplate | undefined>;
   deleteEmailTemplate(id: string): Promise<boolean>;
-
-  // Stock operations
-  consumeStockItem(productId: string): Promise<string | null>;
 
   // Settings
   getSetting(key: string): Promise<string | undefined>;
@@ -123,6 +132,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteOrdersByEmail(email: string): Promise<number> {
+    const existingOrders = await this.getOrdersByEmail(email);
+    await this.deleteOrderItemsByOrderIds(existingOrders.map(order => order.orderId));
     const result = await db.delete(orders).where(eq(orders.email, email)).returning();
     return result.length;
   }
@@ -172,6 +183,29 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
+  async createOrderWithItems(insertOrder: InsertOrder, items: InsertOrderItem[]): Promise<Order> {
+    return await db.transaction(async (tx) => {
+      const [order] = await tx.insert(orders).values(insertOrder).returning();
+      if (items.length > 0) {
+        await tx.insert(orderItems).values(items);
+      }
+      return order;
+    });
+  }
+
+  async attachPaymentToOrder(orderId: string, payment: Partial<InsertOrder>): Promise<Order | undefined> {
+    const [pendingOrder] = await db.update(orders).set({
+      ...payment,
+      status: "pending",
+    }).where(and(eq(orders.orderId, orderId), eq(orders.status, "creating"))).returning();
+    if (pendingOrder) return pendingOrder;
+
+    const [existingOrder] = await db.update(orders).set(payment)
+      .where(eq(orders.orderId, orderId))
+      .returning();
+    return existingOrder || undefined;
+  }
+
   async updateOrder(id: string, updates: Partial<InsertOrder>): Promise<Order | undefined> {
     const [order] = await db.update(orders).set(updates).where(eq(orders.id, id)).returning();
     return order || undefined;
@@ -183,8 +217,141 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteOrder(id: string): Promise<boolean> {
+    const order = await this.getOrder(id);
     const result = await db.delete(orders).where(eq(orders.id, id)).returning();
+    if (order) {
+      await this.deleteOrderItemsByOrderIds([order.orderId]);
+    }
     return result.length > 0;
+  }
+
+  async createOrderItem(insertOrderItem: InsertOrderItem): Promise<OrderItem> {
+    const [item] = await db.insert(orderItems).values(insertOrderItem).returning();
+    return item;
+  }
+
+  async getOrderItemsByOrderId(orderId: string): Promise<OrderItem[]> {
+    return await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  }
+
+  async deleteOrderItemsByOrderIds(orderIds: string[]): Promise<void> {
+    if (orderIds.length === 0) return;
+    await db.delete(orderItems).where(inArray(orderItems.orderId, orderIds));
+  }
+
+  async claimOrderStock(orderId: string): Promise<{ order: Order; productIds: string[] } | null> {
+    return await db.transaction(async (tx) => {
+      const [order] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.orderId, orderId))
+        .for("update");
+      if (!order) return null;
+      if (order.sentStock) return { order, productIds: [] };
+
+      const savedItems = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+      const lines = savedItems.length > 0
+        ? savedItems
+        : [{
+            id: "",
+            orderId,
+            productId: order.productId,
+            productName: order.productName || "Product",
+            quantity: order.quantity,
+            unitPrice: order.totalAmount / Math.max(1, order.quantity),
+            fulfillmentStatus: "pending",
+            fulfilledStock: null,
+          }];
+
+      const productIds = Array.from(new Set(lines.map(line => line.productId))).sort();
+      const lockedProducts = await tx
+        .select()
+        .from(products)
+        .where(inArray(products.id, productIds))
+        .orderBy(products.id)
+        .for("update");
+      const productsById = new Map(lockedProducts.map(product => [product.id, product]));
+      const deliveryByProduct = new Map<string, string[]>();
+
+      for (const line of lines) {
+        const product = productsById.get(line.productId);
+        const available = product?.stockList?.split("\n").filter(item => item.trim() !== "") || [];
+        const alreadyClaimed = deliveryByProduct.get(line.productId)?.length || 0;
+        if (!product || available.length - alreadyClaimed < line.quantity) {
+          throw new InsufficientStockError(line.productName, Math.max(0, available.length - alreadyClaimed), line.quantity);
+        }
+        deliveryByProduct.set(line.productId, [
+          ...(deliveryByProduct.get(line.productId) || []),
+          ...available.slice(alreadyClaimed, alreadyClaimed + line.quantity),
+        ]);
+      }
+
+      for (const productId of productIds) {
+        const product = productsById.get(productId)!;
+        const available = product.stockList?.split("\n").filter(item => item.trim() !== "") || [];
+        const claimed = deliveryByProduct.get(productId) || [];
+        const remaining = available.slice(claimed.length);
+        await tx.update(products).set({
+          stockList: remaining.join("\n"),
+          stock: remaining.length,
+        }).where(eq(products.id, productId));
+      }
+
+      const deliveredSections: string[] = [];
+      const productOffsets = new Map<string, number>();
+      for (const line of lines) {
+        const offset = productOffsets.get(line.productId) || 0;
+        const delivered = (deliveryByProduct.get(line.productId) || []).slice(offset, offset + line.quantity);
+        productOffsets.set(line.productId, offset + line.quantity);
+        deliveredSections.push(`${line.productName} (x${delivered.length})\n${delivered.join("\n")}`);
+        if (line.id) {
+          await tx.update(orderItems).set({
+            fulfillmentStatus: "claimed",
+            fulfilledStock: delivered.join("\n"),
+          }).where(eq(orderItems.id, line.id));
+        }
+      }
+
+      const sentStock = deliveredSections.join("\n\n");
+      const [claimedOrder] = await tx.update(orders).set({
+        status: "fulfilling",
+        sentStock,
+        deliveryStatus: "pending",
+        deliveryAttemptedAt: null,
+      }).where(eq(orders.orderId, orderId)).returning();
+      return { order: claimedOrder, productIds };
+    });
+  }
+
+  async claimOrderDelivery(orderId: string): Promise<Order | undefined> {
+    const [order] = await db.update(orders).set({
+      deliveryStatus: "sending",
+      deliveryAttemptedAt: new Date().toISOString(),
+    }).where(and(
+      eq(orders.orderId, orderId),
+      eq(orders.status, "fulfilling"),
+      inArray(orders.deliveryStatus, ["pending", "failed"]),
+    )).returning();
+    return order || undefined;
+  }
+
+  async failOrderDelivery(orderId: string): Promise<Order | undefined> {
+    const [order] = await db.update(orders).set({
+      status: "fulfilling",
+      deliveryStatus: "failed",
+    }).where(and(
+      eq(orders.orderId, orderId),
+      eq(orders.deliveryStatus, "sending"),
+    )).returning();
+    return order || undefined;
+  }
+
+  async completeOrderDelivery(orderId: string): Promise<Order | undefined> {
+    const [order] = await db.update(orders).set({
+      status: "completed",
+      deliveryStatus: "sent",
+    }).where(eq(orders.orderId, orderId)).returning();
+    return order || undefined;
   }
 
   // Statistics
@@ -234,25 +401,6 @@ export class DatabaseStorage implements IStorage {
   async deleteEmailTemplate(id: string): Promise<boolean> {
     const result = await db.delete(emailTemplates).where(eq(emailTemplates.id, id)).returning();
     return result.length > 0;
-  }
-
-  // Stock operations
-  async consumeStockItem(productId: string): Promise<string | null> {
-    const product = await this.getProduct(productId);
-    if (!product || !product.stockList) return null;
-
-    const lines = product.stockList.split('\n').filter(line => line.trim() !== '');
-    if (lines.length === 0) return null;
-
-    const stockItem = lines[0];
-    const remainingLines = lines.slice(1);
-
-    await this.updateProduct(productId, {
-      stockList: remainingLines.join('\n'),
-      stock: remainingLines.length,
-    });
-
-    return stockItem;
   }
 
   // Settings
@@ -339,3 +487,14 @@ export class DatabaseStorage implements IStorage {
 }
 
 export const storage = new DatabaseStorage();
+
+export class InsufficientStockError extends Error {
+  constructor(
+    public readonly productName: string,
+    public readonly available: number,
+    public readonly requested: number,
+  ) {
+    super(`Insufficient stock for ${productName}: ${available} available, ${requested} requested`);
+    this.name = "InsufficientStockError";
+  }
+}

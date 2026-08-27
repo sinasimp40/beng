@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { createHash } from "node:crypto";
 import { storage } from "./storage";
 
 interface SmtpConfig {
@@ -255,6 +256,7 @@ class EmailService {
         to: params.to,
         subject,
         html: htmlContent,
+        messageId: `<order-${createHash("sha256").update(params.orderId).digest("hex").slice(0, 32)}@digital-delivery.local>`,
       });
 
       console.log(`Email sent successfully to ${params.to}`);

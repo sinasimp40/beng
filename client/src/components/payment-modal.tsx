@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Product } from "@shared/schema";
+import type { CartItem } from "@/lib/cart";
 import { useAuth } from "@/lib/auth";
 import {
   Dialog,
@@ -45,6 +46,11 @@ interface ExistingOrder {
   payAmount?: number | null;
   sentStock?: string | null;
   email?: string | null;
+  items?: Array<{
+    productName: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
 }
 
 interface PaymentModalProps {
@@ -54,6 +60,7 @@ interface PaymentModalProps {
   onOpenChange: (open: boolean) => void;
   onPaymentComplete: (paymentId: string) => void;
   existingOrder?: ExistingOrder | null;
+  cartItems?: CartItem[];
 }
 
 type ModalStep = "form" | "processing" | "awaiting_payment" | "confirming" | "success" | "error" | "expired";
@@ -104,6 +111,7 @@ export function PaymentModal({
   onOpenChange,
   onPaymentComplete,
   existingOrder,
+  cartItems = [],
 }: PaymentModalProps) {
   const { user } = useAuth();
   const [email, setEmail] = useState("");
@@ -184,7 +192,14 @@ export function PaymentModal({
   const wsRef = useRef<WebSocket | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
-  const totalAmount = existingOrder ? existingOrder.totalAmount : (product ? product.price * quantity : 0);
+  const isCartCheckout = cartItems.length > 0;
+  const existingItems = existingOrder?.items || [];
+  const hasLineItems = isCartCheckout || existingItems.length > 0;
+  const totalAmount = existingOrder
+    ? existingOrder.totalAmount
+    : isCartCheckout
+      ? cartItems.reduce((total, item) => total + item.price * item.quantity, 0)
+      : (product ? product.price * quantity : 0);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -330,6 +345,9 @@ export function PaymentModal({
   const isResumedOrder = !!existingOrder;
   const getFullProductName = () => {
     if (existingOrder?.productName) return existingOrder.productName;
+    if (isCartCheckout) {
+      return cartItems.length === 1 ? cartItems[0].name : `${cartItems.length} products`;
+    }
     if (!product) return "";
     if (product.parentId && product.category?.trim()) {
       return `${product.name} - ${product.category.trim()}`;
@@ -337,9 +355,11 @@ export function PaymentModal({
     return product.name;
   };
   const displayName = getFullProductName();
-  const displayQuantity = existingOrder?.quantity || quantity;
+  const displayQuantity = existingOrder?.quantity || (isCartCheckout
+    ? cartItems.reduce((total, item) => total + item.quantity, 0)
+    : quantity);
 
-  if (!product && !existingOrder) return null;
+  if (!product && !existingOrder && !isCartCheckout) return null;
 
   const handleCreatePayment = async () => {
     if (!email) {
@@ -374,7 +394,10 @@ export function PaymentModal({
         email,
         productName: displayName,
         productId: product?.id,
-        quantity,
+        quantity: displayQuantity,
+        items: isCartCheckout
+          ? cartItems.map(item => ({ productId: item.productId, quantity: item.quantity }))
+          : undefined,
       });
 
       const payment = await response.json();
@@ -509,9 +532,30 @@ export function PaymentModal({
                 <div className="absolute inset-0 border border-gray-200 dark:border-white/[0.06] rounded-xl pointer-events-none" />
                 <div className="relative p-4 space-y-3">
                   <div className="flex justify-between items-start gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-gray-400 dark:text-[hsl(0_0%_40%)] uppercase tracking-widest font-medium mb-1">Product</p>
-                      <p className="font-semibold text-gray-900 dark:text-white text-sm leading-tight truncate">{displayName}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] text-gray-400 dark:text-[hsl(0_0%_40%)] uppercase tracking-widest font-medium mb-1">{hasLineItems ? "Order summary" : "Product"}</p>
+                      {hasLineItems ? (
+                        <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                          {(isCartCheckout ? cartItems.map(item => ({
+                            id: item.productId,
+                            name: `${item.name}${item.variantLabel ? ` · ${item.variantLabel}` : ""}`,
+                            quantity: item.quantity,
+                          })) : existingItems.map((item, index) => ({
+                            id: `${item.productName}-${index}`,
+                            name: item.productName,
+                            quantity: item.quantity,
+                          }))).map(item => (
+                            <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="text-gray-700 dark:text-white/80 truncate">
+                                {item.name}
+                              </span>
+                              <span className="text-gray-500 dark:text-white/45 shrink-0">x{item.quantity}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="font-semibold text-gray-900 dark:text-white text-sm leading-tight truncate">{displayName}</p>
+                      )}
                     </div>
                     <div className="flex-shrink-0 px-2.5 py-1 rounded-md bg-primary/10 border border-primary/20">
                       <span className="text-xs font-bold text-primary tabular-nums">x{displayQuantity}</span>

@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { storage } from "./storage";
+import { InsufficientStockError, storage } from "./storage";
 import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema } from "@shared/schema";
 import { z } from "zod";
 import { nowPaymentsService } from "./nowpayments";
@@ -191,6 +191,79 @@ const statusSubscribers = new Set<WebSocket>();
 // Lock for processing completed orders (prevents duplicate email/stock consumption)
 const processingOrders = new Set<string>();
 
+const checkoutItemsSchema = z.array(z.object({
+  productId: z.string().min(1).max(200),
+  quantity: z.coerce.number().int().min(1).max(100),
+})).min(1).max(50);
+
+async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined> {
+  if (processingOrders.has(orderId)) {
+    return storage.getOrderByOrderId(orderId);
+  }
+
+  processingOrders.add(orderId);
+  try {
+    let order = await storage.getOrderByOrderId(orderId);
+    if (!order || order.status === "completed") return order;
+
+    let productIds: string[] = [];
+    if (!order.sentStock) {
+      try {
+        const claim = await storage.claimOrderStock(orderId);
+        if (!claim) return undefined;
+        order = claim.order;
+        productIds = claim.productIds;
+      } catch (error) {
+        if (!(error instanceof InsufficientStockError)) throw error;
+        const failedOrder = await storage.updateOrderByOrderId(orderId, {
+          status: "fulfillment_failed",
+        });
+        if (failedOrder) {
+          broadcastOrderUpdate("order_updated", failedOrder);
+        }
+        console.error(`Fulfillment paused for ${orderId}: ${error.message}`);
+        return failedOrder;
+      }
+    }
+
+    for (const productId of productIds) {
+      const updatedProduct = await storage.getProduct(productId);
+      if (updatedProduct) broadcastProductUpdate("product_updated", updatedProduct);
+    }
+
+    const deliveryEmail = order.email;
+    const deliveryStock = order.sentStock;
+    if (deliveryStock && deliveryEmail) {
+      const deliveryClaim = await storage.claimOrderDelivery(orderId);
+      if (!deliveryClaim) {
+        return storage.getOrderByOrderId(orderId);
+      }
+      order = deliveryClaim;
+      const emailResult = await emailService.sendOrderEmail({
+        to: deliveryEmail,
+        orderId: order.orderId,
+        productName: order.productName || "Order",
+        totalAmount: order.totalAmount,
+        stockItem: deliveryStock,
+      });
+      if (!emailResult.success) {
+        await storage.failOrderDelivery(orderId);
+        console.error(`Delivery email pending for ${orderId}: ${emailResult.error || "Unknown email error"}`);
+        return storage.getOrderByOrderId(orderId);
+      }
+    }
+
+    const updatedOrder = await storage.completeOrderDelivery(orderId);
+    if (updatedOrder) {
+      broadcastOrderUpdate("order_updated", updatedOrder);
+      notifyTelegramOrder(updatedOrder, true);
+    }
+    return updatedOrder;
+  } finally {
+    processingOrders.delete(orderId);
+  }
+}
+
 // Background polling interval for pending orders (auto-update from NOWPayments)
 let orderPollingInterval: NodeJS.Timeout | null = null;
 
@@ -201,6 +274,17 @@ async function pollPendingOrders() {
     }
 
     const allOrders = await storage.getAllOrders();
+    const fulfillmentRetries = allOrders.filter(order =>
+      order.status === "fulfilling" || order.status === "fulfillment_failed"
+    );
+    for (const order of fulfillmentRetries) {
+      try {
+        await fulfillCompletedOrder(order.orderId);
+      } catch (error) {
+        console.error(`Fulfillment retry failed for ${order.orderId}:`, error);
+      }
+    }
+
     const pendingOrders = allOrders.filter(o => 
       (o.status === 'pending' || o.status === 'confirming') && o.paymentId
     );
@@ -224,68 +308,11 @@ async function pollPendingOrders() {
         const newStatus = statusMap[status.payment_status] || order.status;
         
         if (newStatus !== order.status) {
-          // If completed and no stock sent, process the order
-          if (newStatus === 'completed' && !order.sentStock) {
-            if (!processingOrders.has(order.orderId)) {
-              processingOrders.add(order.orderId);
-              try {
-                const freshOrder = await storage.getOrderByOrderId(order.orderId);
-                if (freshOrder && !freshOrder.sentStock) {
-                  const stockItem = await storage.consumeStockItem(freshOrder.productId);
-                  
-                  if (stockItem && freshOrder.email) {
-                    await storage.updateOrderByOrderId(order.orderId, { 
-                      status: 'completed',
-                      sentStock: stockItem 
-                    });
-                    
-                    // Send email notification
-                    try {
-                      const template = await storage.getDefaultEmailTemplate();
-                      if (template) {
-                        const shopName = await storage.getSetting("shop_name") || "Store";
-                        const themeColors = await getThemeColors();
-                        await emailService.sendEmail({
-                          to: freshOrder.email,
-                          subject: template.subject
-                            .replace(/\{\{productName\}\}/g, freshOrder.productName || "Product")
-                            .replace(/\{\{shopName\}\}/g, shopName),
-                          html: template.htmlContent
-                            .replace(/\{\{orderId\}\}/g, freshOrder.orderId)
-                            .replace(/\{\{productName\}\}/g, freshOrder.productName || "Product")
-                            .replace(/\{\{quantity\}\}/g, String(freshOrder.quantity))
-                            .replace(/\{\{payAmount\}\}/g, String(freshOrder.payAmount || 0))
-                            .replace(/\{\{payCurrency\}\}/g, (freshOrder.payCurrency || "").toUpperCase())
-                            .replace(/\{\{email\}\}/g, freshOrder.email)
-                            .replace(/\{\{sentStock\}\}/g, stockItem || "")
-                            .replace(/\{\{shopName\}\}/g, shopName)
-                            .replace(/\{\{themeColor\}\}/g, themeColors.hex)
-                            .replace(/\{\{themeRgba\}\}/g, themeColors.rgba02),
-                        });
-                      }
-                    } catch (emailError) {
-                      console.error("Failed to send order email:", emailError);
-                    }
-                    
-                    const updatedOrder = await storage.getOrderByOrderId(order.orderId);
-                    if (updatedOrder) {
-                      broadcastPaymentStatus(order.paymentId!, { ...status, order: updatedOrder });
-                      broadcastOrderUpdate("order_updated", updatedOrder);
-                      notifyTelegramOrder(updatedOrder, true);
-                    }
-                  } else {
-                    await storage.updateOrderByOrderId(order.orderId, { status: 'completed' });
-                    const updatedOrder = await storage.getOrderByOrderId(order.orderId);
-                    if (updatedOrder) {
-                      broadcastPaymentStatus(order.paymentId!, { ...status, order: updatedOrder });
-                      broadcastOrderUpdate("order_updated", updatedOrder);
-                      notifyTelegramOrder(updatedOrder, true);
-                    }
-                  }
-                }
-              } finally {
-                processingOrders.delete(order.orderId);
-              }
+          // Complete fulfillment (including retrying delivery after stock was claimed).
+          if (newStatus === 'completed') {
+            const updatedOrder = await fulfillCompletedOrder(order.orderId);
+            if (updatedOrder) {
+              broadcastPaymentStatus(order.paymentId!, { ...status, order: updatedOrder });
             }
           } else {
             // Just update the status
@@ -878,7 +905,11 @@ export async function registerRoutes(
       }
 
       const orders = await storage.getOrdersByEmail(session.email);
-      res.json(orders);
+      const ordersWithItems = await Promise.all(orders.map(async order => ({
+        ...order,
+        items: await storage.getOrderItemsByOrderId(order.orderId),
+      })));
+      res.json(ordersWithItems);
     } catch (error) {
       console.error("Error fetching user orders:", error);
       res.status(500).json({ error: "Failed to fetch orders" });
@@ -1909,24 +1940,57 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Payment gateway not configured" });
       }
 
-      const { amount, currency, orderId, email, productName, productId, quantity } = req.body;
+      const request = z.object({
+        currency: z.string().min(1).max(20),
+        orderId: z.string().min(1).max(200),
+        email: z.string().email().max(320),
+        productId: z.string().optional(),
+        quantity: z.coerce.number().int().min(1).max(100).optional(),
+        items: z.unknown().optional(),
+      }).parse(req.body);
+      const { currency, orderId, email, productId, quantity, items } = request;
 
-      if (!amount || !currency || !orderId || !email) {
-        return res.status(400).json({ error: "Missing required fields" });
+      const requestedItems = checkoutItemsSchema.parse(
+        Array.isArray(items) && items.length > 0
+          ? items
+          : [{ productId, quantity: quantity || 1 }],
+      );
+      const quantitiesByProduct = new Map<string, number>();
+      requestedItems.forEach(item => {
+        quantitiesByProduct.set(item.productId, (quantitiesByProduct.get(item.productId) || 0) + item.quantity);
+      });
+
+      const checkoutLines = [];
+      for (const [requestedProductId, requestedQuantity] of quantitiesByProduct) {
+        if (requestedQuantity > 100) {
+          return res.status(400).json({ error: "Maximum quantity per product is 100" });
+        }
+        const product = await storage.getProduct(requestedProductId);
+        if (!product || product.enabled !== 1) {
+          return res.status(400).json({ error: "A product in your cart is no longer available" });
+        }
+        if (product.stock < requestedQuantity) {
+          return res.status(400).json({ error: `Only ${product.stock} units of ${product.name} are available` });
+        }
+        checkoutLines.push({
+          product,
+          quantity: requestedQuantity,
+          displayName: product.parentId && product.category?.trim()
+            ? `${product.name} - ${product.category.trim()}`
+            : product.name,
+        });
       }
 
-      // Construct IPN callback URL using REPLIT_DOMAINS
-      const domain = process.env.REPLIT_DOMAINS || process.env.REPLIT_DEV_DOMAIN;
-      const ipnCallbackUrl = domain ? `https://${domain}/api/payments/ipn` : undefined;
-
-      const payment = await nowPaymentsService.createPayment({
-        price_amount: amount,
-        price_currency: "usd",
-        pay_currency: currency.toLowerCase(),
-        order_id: orderId,
-        order_description: `Purchase: ${productName}`,
-        ipn_callback_url: ipnCallbackUrl,
-      });
+      const authoritativeAmount = Math.round(
+        checkoutLines.reduce((total, line) => total + line.product.price * line.quantity, 0) * 100,
+      ) / 100;
+      if (authoritativeAmount <= 0) {
+        return res.status(400).json({ error: "Invalid cart total" });
+      }
+      const totalQuantity = checkoutLines.reduce((total, line) => total + line.quantity, 0);
+      const orderProductName = checkoutLines.length === 1
+        ? checkoutLines[0].displayName
+        : `${checkoutLines.length} products`;
 
       // Capture client IP address
       const ipAddress = req.ip || 
@@ -1935,22 +1999,50 @@ export async function registerRoutes(
                         req.socket.remoteAddress || 
                         'unknown';
 
-      // Save order to database with IP address
-      const newOrder = await storage.createOrder({
-        orderId: orderId,
-        productId: productId || "",
-        productName: productName || "",
-        quantity: quantity || 1,
-        totalAmount: amount,
-        status: "pending",
+      await storage.createOrderWithItems({
+        orderId,
+        productId: checkoutLines[0].product.id,
+        productName: orderProductName,
+        quantity: totalQuantity,
+        totalAmount: authoritativeAmount,
+        status: "creating",
+        email,
+        createdAt: new Date().toISOString(),
+        ipAddress,
+      }, checkoutLines.map(line => ({
+        orderId,
+        productId: line.product.id,
+        productName: line.displayName,
+        quantity: line.quantity,
+        unitPrice: line.product.price,
+      })));
+
+      // Construct IPN callback URL using REPLIT_DOMAINS
+      const domain = process.env.REPLIT_DOMAINS || process.env.REPLIT_DEV_DOMAIN;
+      const ipnCallbackUrl = domain ? `https://${domain}/api/payments/ipn` : undefined;
+
+      let payment;
+      try {
+        payment = await nowPaymentsService.createPayment({
+          price_amount: authoritativeAmount,
+          price_currency: "usd",
+          pay_currency: currency.toLowerCase(),
+          order_id: orderId,
+          order_description: `Purchase: ${orderProductName}`,
+          ipn_callback_url: ipnCallbackUrl,
+        });
+      } catch (error) {
+        await storage.updateOrderByOrderId(orderId, { status: "failed" });
+        throw error;
+      }
+
+      const newOrder = await storage.attachPaymentToOrder(orderId, {
         paymentId: payment.payment_id?.toString(),
         payAddress: payment.pay_address,
         payCurrency: payment.pay_currency,
         payAmount: payment.pay_amount,
-        email: email,
-        createdAt: new Date().toISOString(),
-        ipAddress: ipAddress,
       });
+      if (!newOrder) throw new Error("Order could not be finalized");
 
       // Broadcast order creation to admin subscribers
       broadcastOrderUpdate("order_created", newOrder);
@@ -1958,8 +2050,11 @@ export async function registerRoutes(
       // Send Telegram notification for new order
       notifyTelegramOrder(newOrder, false);
 
-      res.json(payment);
+      res.json({ ...payment, price_amount: authoritativeAmount });
     } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors[0]?.message || "Invalid cart" });
+      }
       console.error("Error creating payment:", error);
       res.status(500).json({ error: error.message || "Failed to create payment" });
     }
@@ -2007,55 +2102,9 @@ export async function registerRoutes(
 
         const order = await storage.getOrderByOrderId(order_id);
         
-        // If payment is successful and we haven't sent stock yet
-        if (newStatus === "completed" && order && !order.sentStock) {
-          // Use lock to prevent duplicate processing
-          if (processingOrders.has(order_id)) {
-            console.log(`IPN: Order ${order_id} already being processed, skipping`);
-          } else {
-            processingOrders.add(order_id);
-            try {
-              // Re-fetch order to get latest state
-              const freshOrder = await storage.getOrderByOrderId(order_id);
-              if (freshOrder && !freshOrder.sentStock) {
-                const stockItem = await storage.consumeStockItem(freshOrder.productId);
-                
-                // Broadcast product update so stock count refreshes in real-time
-                const updatedProduct = await storage.getProduct(freshOrder.productId);
-                if (updatedProduct) {
-                  broadcastProductUpdate("product_updated", updatedProduct);
-                }
-                
-                if (stockItem && freshOrder.email) {
-                  await emailService.sendOrderEmail({
-                    to: freshOrder.email,
-                    orderId: freshOrder.orderId,
-                    productName: freshOrder.productName || "Product",
-                    totalAmount: freshOrder.totalAmount,
-                    stockItem: stockItem,
-                  });
-                  
-                  const updatedOrder = await storage.updateOrderByOrderId(order_id, { 
-                    status: newStatus,
-                    sentStock: stockItem,
-                  });
-                  
-                  if (updatedOrder) {
-                    broadcastOrderUpdate("order_updated", updatedOrder);
-                    notifyTelegramOrder(updatedOrder, true);
-                  }
-                } else {
-                  const updatedOrder = await storage.updateOrderByOrderId(order_id, { status: newStatus });
-                  if (updatedOrder) {
-                    broadcastOrderUpdate("order_updated", updatedOrder);
-                    notifyTelegramOrder(updatedOrder, true);
-                  }
-                }
-              }
-            } finally {
-              processingOrders.delete(order_id);
-            }
-          }
+        // Complete fulfillment (including retrying delivery after stock was claimed).
+        if (newStatus === "completed" && order) {
+          await fulfillCompletedOrder(order_id);
         } else if (order && order.status !== newStatus) {
           const updatedOrder = await storage.updateOrderByOrderId(order_id, { status: newStatus });
           if (updatedOrder) {
@@ -2967,50 +3016,10 @@ export async function registerRoutes(
         
         // Only process if order exists and status has changed
         if (order && order.status !== newStatus) {
-          // If payment is successful and we haven't sent stock yet
-          if (newStatus === "completed" && !order.sentStock) {
-            // Use lock to prevent duplicate processing
-            if (processingOrders.has(status.order_id)) {
-              console.log(`Poll: Order ${status.order_id} already being processed, skipping`);
-            } else {
-              processingOrders.add(status.order_id);
-              try {
-                // Re-fetch order to get latest state
-                const freshOrder = await storage.getOrderByOrderId(status.order_id);
-                if (freshOrder && !freshOrder.sentStock) {
-                  const stockItem = await storage.consumeStockItem(freshOrder.productId);
-                  
-                  if (stockItem && freshOrder.email) {
-                    await emailService.sendOrderEmail({
-                      to: freshOrder.email,
-                      orderId: freshOrder.orderId,
-                      productName: freshOrder.productName || "Product",
-                      totalAmount: freshOrder.totalAmount,
-                      stockItem: stockItem,
-                    });
-                    
-                    const updatedOrder = await storage.updateOrderByOrderId(status.order_id, { 
-                      status: newStatus,
-                      sentStock: stockItem,
-                    });
-                    
-                    if (updatedOrder) {
-                      broadcastOrderUpdate("order_updated", updatedOrder);
-                      notifyTelegramOrder(updatedOrder, true);
-                    }
-                  } else {
-                    const updatedOrder = await storage.updateOrderByOrderId(status.order_id, { status: newStatus });
-                    if (updatedOrder) {
-                      broadcastOrderUpdate("order_updated", updatedOrder);
-                      notifyTelegramOrder(updatedOrder, true);
-                    }
-                  }
-                }
-              } finally {
-                processingOrders.delete(status.order_id);
-              }
-            }
-          } else if (newStatus !== "completed") {
+          // Complete fulfillment (including retrying delivery after stock was claimed).
+          if (newStatus === "completed") {
+            await fulfillCompletedOrder(status.order_id);
+          } else {
             // Update status for non-completed states
             const updatedOrder = await storage.updateOrderByOrderId(status.order_id, { status: newStatus });
             if (updatedOrder) {
