@@ -8,6 +8,8 @@
     "build": "node_modules/.bin/tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test": "npm run test:integration",
+    "test:integration": "node --import tsx --test server/fulfillment.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
