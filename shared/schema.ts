@@ -318,6 +318,8 @@ export const orders = pgTable("orders", {
   sentStock: text("sent_stock"),
   deliveryStatus: text("delivery_status").notNull().default("pending"),
   deliveryAttemptedAt: text("delivery_attempted_at"),
+  deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+  deliveryLeaseId: text("delivery_lease_id"),
   ipAddress: text("ip_address"),
 });
 

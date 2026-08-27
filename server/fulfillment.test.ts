@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { inArray } from "drizzle-orm";
 import { db, pool } from "./db";
-import { InsufficientStockError, storage } from "./storage";
+import {
+  DELIVERY_LEASE_TIMEOUT_MS,
+  InsufficientStockError,
+  MAX_DELIVERY_ATTEMPTS,
+  storage,
+} from "./storage";
 import { orderItems, orders, products } from "@shared/schema";
 
 const fixtureOrderIds = new Set<string>();
@@ -231,14 +236,135 @@ describe("digital fulfillment integrity", () => {
       sentStock: "retryable-credential",
     });
 
-    assert.ok(await storage.claimOrderDelivery(orderId));
-    const failed = await storage.failOrderDelivery(orderId);
+    const firstLease = await storage.claimOrderDelivery(orderId);
+    assert.ok(firstLease?.deliveryLeaseId);
+    const failed = await storage.failOrderDelivery(orderId, firstLease.deliveryLeaseId);
     assert.equal(failed?.status, "fulfilling");
     assert.equal(failed?.deliveryStatus, "failed");
 
     const retryClaim = await storage.claimOrderDelivery(orderId);
     assert.ok(retryClaim);
     assert.equal(retryClaim.deliveryStatus, "sending");
+  });
+
+  it("lets exactly one worker recover an expired delivery lease", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "recoverable-credential",
+    });
+
+    const abandonedLease = await storage.claimOrderDelivery(orderId);
+    assert.ok(abandonedLease?.deliveryLeaseId);
+
+    await storage.updateOrderByOrderId(orderId, {
+      deliveryAttemptedAt: new Date(
+        Date.now() - DELIVERY_LEASE_TIMEOUT_MS - 1_000,
+      ).toISOString(),
+    });
+
+    const recoveryClaims = await Promise.all(
+      Array.from({ length: 8 }, () => storage.claimOrderDelivery(orderId)),
+    );
+    assert.equal(recoveryClaims.filter(Boolean).length, 1);
+
+    const recoveredLease = recoveryClaims.find(Boolean);
+    assert.ok(recoveredLease?.deliveryLeaseId);
+    assert.notEqual(recoveredLease.deliveryLeaseId, abandonedLease.deliveryLeaseId);
+    assert.equal(recoveredLease.deliveryAttempts, 2);
+
+    assert.equal(
+      await storage.completeOrderDelivery(orderId, abandonedLease.deliveryLeaseId),
+      undefined,
+    );
+    assert.equal(
+      await storage.failOrderDelivery(orderId, abandonedLease.deliveryLeaseId),
+      undefined,
+    );
+    assert.equal(
+      await (storage.completeOrderDelivery as any)(orderId),
+      undefined,
+    );
+    assert.equal(
+      await (storage.failOrderDelivery as any)(orderId),
+      undefined,
+    );
+
+    const stillOwnedByRecoveryWorker = await storage.getOrderByOrderId(orderId);
+    assert.equal(stillOwnedByRecoveryWorker?.deliveryStatus, "sending");
+    assert.equal(stillOwnedByRecoveryWorker?.deliveryLeaseId, recoveredLease.deliveryLeaseId);
+
+    const completed = await storage.completeOrderDelivery(orderId, recoveredLease.deliveryLeaseId);
+    assert.equal(completed?.status, "completed");
+    assert.equal(completed?.deliveryStatus, "sent");
+  });
+
+  it("stops retrying an exhausted delivery and leaves it visible", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "manual-review-credential",
+    });
+
+    for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt++) {
+      const lease = await storage.claimOrderDelivery(orderId);
+      assert.ok(lease?.deliveryLeaseId);
+      assert.equal(lease.deliveryAttempts, attempt);
+
+      const failed = await storage.failOrderDelivery(orderId, lease.deliveryLeaseId);
+      assert.ok(failed);
+      if (attempt < MAX_DELIVERY_ATTEMPTS) {
+        assert.equal(failed.deliveryStatus, "failed");
+        assert.equal(failed.status, "fulfilling");
+      } else {
+        assert.equal(failed.deliveryStatus, "exhausted");
+        assert.equal(failed.status, "fulfillment_failed");
+      }
+    }
+
+    assert.equal(await storage.claimOrderDelivery(orderId), undefined);
+    const adminOrders = await storage.getAllOrders();
+    const exhaustedOrder = adminOrders.find(order => order.orderId === orderId);
+    assert.ok(exhaustedOrder);
+    assert.equal(exhaustedOrder.deliveryAttempts, MAX_DELIVERY_ATTEMPTS);
+    assert.equal(exhaustedOrder.deliveryStatus, "exhausted");
+  });
+
+  it("marks a crashed final delivery attempt for admin intervention", async () => {
+    const productId = await createProduct([]);
+    const orderId = await createOrder({
+      productId,
+      quantity: 1,
+      status: "fulfilling",
+      sentStock: "final-crash-credential",
+    });
+
+    for (let attempt = 1; attempt < MAX_DELIVERY_ATTEMPTS; attempt++) {
+      const lease = await storage.claimOrderDelivery(orderId);
+      assert.ok(lease?.deliveryLeaseId);
+      assert.ok(await storage.failOrderDelivery(orderId, lease.deliveryLeaseId));
+    }
+
+    const finalLease = await storage.claimOrderDelivery(orderId);
+    assert.ok(finalLease?.deliveryLeaseId);
+    assert.equal(finalLease.deliveryAttempts, MAX_DELIVERY_ATTEMPTS);
+
+    await storage.updateOrderByOrderId(orderId, {
+      deliveryAttemptedAt: new Date(
+        Date.now() - DELIVERY_LEASE_TIMEOUT_MS - 1_000,
+      ).toISOString(),
+    });
+
+    assert.equal(await storage.claimOrderDelivery(orderId), undefined);
+    const exhausted = await storage.getOrderByOrderId(orderId);
+    assert.equal(exhausted?.status, "fulfillment_failed");
+    assert.equal(exhausted?.deliveryStatus, "exhausted");
+    assert.equal(exhausted?.deliveryLeaseId, null);
+    assert.equal(exhausted?.deliveryAttemptedAt, null);
   });
 
   it("fulfills a legacy order without order_items rows", async () => {
@@ -262,8 +388,7 @@ describe("digital fulfillment integrity", () => {
     assert.equal(remaining?.stock, 0);
     assert.equal(remaining?.stockList, "");
 
-    assert.ok(await storage.claimOrderDelivery(orderId));
-    const completed = await storage.completeOrderDelivery(orderId);
+    const completed = await storage.completeOrderWithoutDelivery(orderId);
     assert.equal(completed?.status, "completed");
     assert.equal(completed?.deliveryStatus, "sent");
   });

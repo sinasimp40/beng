@@ -233,12 +233,17 @@ async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined
 
     const deliveryEmail = order.email;
     const deliveryStock = order.sentStock;
+    let deliveryLeaseId: string | undefined;
     if (deliveryStock && deliveryEmail) {
       const deliveryClaim = await storage.claimOrderDelivery(orderId);
       if (!deliveryClaim) {
         return storage.getOrderByOrderId(orderId);
       }
       order = deliveryClaim;
+      if (!order.deliveryLeaseId) {
+        throw new Error(`Delivery lease ${orderId} has no ownership token`);
+      }
+      deliveryLeaseId = order.deliveryLeaseId;
       const emailResult = await emailService.sendOrderEmail({
         to: deliveryEmail,
         orderId: order.orderId,
@@ -247,13 +252,18 @@ async function fulfillCompletedOrder(orderId: string): Promise<Order | undefined
         stockItem: deliveryStock,
       });
       if (!emailResult.success) {
-        await storage.failOrderDelivery(orderId);
+        const failedOrder = await storage.failOrderDelivery(orderId, deliveryLeaseId);
+        if (failedOrder) {
+          broadcastOrderUpdate("order_updated", failedOrder);
+        }
         console.error(`Delivery email pending for ${orderId}: ${emailResult.error || "Unknown email error"}`);
         return storage.getOrderByOrderId(orderId);
       }
     }
 
-    const updatedOrder = await storage.completeOrderDelivery(orderId);
+    const updatedOrder = deliveryLeaseId
+      ? await storage.completeOrderDelivery(orderId, deliveryLeaseId)
+      : await storage.completeOrderWithoutDelivery(orderId);
     if (updatedOrder) {
       broadcastOrderUpdate("order_updated", updatedOrder);
       notifyTelegramOrder(updatedOrder, true);
@@ -269,13 +279,10 @@ let orderPollingInterval: NodeJS.Timeout | null = null;
 
 async function pollPendingOrders() {
   try {
-    if (!nowPaymentsService.isConfigured()) {
-      return;
-    }
-
     const allOrders = await storage.getAllOrders();
     const fulfillmentRetries = allOrders.filter(order =>
-      order.status === "fulfilling" || order.status === "fulfillment_failed"
+      (order.status === "fulfilling" || order.status === "fulfillment_failed") &&
+      order.deliveryStatus !== "exhausted"
     );
     for (const order of fulfillmentRetries) {
       try {
@@ -283,6 +290,10 @@ async function pollPendingOrders() {
       } catch (error) {
         console.error(`Fulfillment retry failed for ${order.orderId}:`, error);
       }
+    }
+
+    if (!nowPaymentsService.isConfigured()) {
+      return;
     }
 
     const pendingOrders = allOrders.filter(o => 
