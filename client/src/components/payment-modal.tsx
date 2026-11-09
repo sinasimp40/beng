@@ -704,9 +704,6 @@ export function PaymentModal({
                     <span className="flex items-center gap-3"><CreditCard className="h-5 w-5 text-primary" /><span><span className="block text-sm font-medium">Account credit</span><span className="text-xs text-gray-500">Available: ${(creditBalanceCents / 100).toFixed(2)}</span></span></span>
                   </button>}
                   {availableCryptoOptions.map((crypto) => {
-                    const minimum = crypto.id === "usdt"
-                      ? undefined
-                      : minimumData?.minimums[crypto.id];
                     const isSelected = selectedCrypto === crypto.id;
                     return (
                     <button
@@ -742,7 +739,6 @@ export function PaymentModal({
                       <span className={`text-[11px] font-medium transition-colors ${isSelected ? "text-gray-900 dark:text-white" : "text-gray-500 dark:text-[hsl(0_0%_45%)]"}`}>
                         {crypto.id === "bnbbsc" ? "BNB (BSC) · Native coin" : crypto.name}
                       </span>
-                       {minimum && <span className="text-[9px] text-gray-400">Est. min ${minimum.minimumUsd.toFixed(2)}</span>}
                        {crypto.id === "usdt" && <span className="text-[9px] text-gray-400">Choose network below</span>}
                     </button>
                     );
@@ -753,7 +749,6 @@ export function PaymentModal({
                     <legend className="text-xs font-medium text-gray-600 dark:text-white/70">USDT network</legend>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {usdtNetworks.filter(network => eligibleUsdtNetworks.includes(network.id)).map(network => {
-                        const minimum = minimumData?.minimums[network.id];
                         const selected = selectedUsdtNetwork === network.id;
                         return (
                           <button
@@ -769,7 +764,6 @@ export function PaymentModal({
                             data-testid={`button-usdt-network-${network.id}`}
                           >
                             <span className="block text-xs font-semibold">{network.label}</span>
-                            <span className="mt-1 block text-[10px] text-gray-400">Est. min ${minimum?.minimumUsd.toFixed(2)}</span>
                           </button>
                         );
                       })}

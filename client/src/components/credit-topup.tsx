@@ -135,7 +135,7 @@ export function CreditTopup() {
       <CardContent className="p-5 space-y-5">
         {!topup ? <><div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2"><Label htmlFor="credit-amount">Amount in USD</Label><Input id="credit-amount" type="number" min="1" max="10000" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} data-testid="input-credit-topup-amount" /><p className="text-xs text-muted-foreground">Minimum $1.00 · Maximum $10,000.00</p></div>
-          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={value => { const choice = value as CurrencyChoice; setCurrency(choice); if (choice !== "usdt") setUsdtNetwork(null); }}><SelectTrigger data-testid="select-credit-currency"><SelectValue placeholder="Choose a payment method" /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.filter(c => !c.id.startsWith("usdt") && eligibleCryptoIds.includes(c.id)).map(c => { const minimum = minimumData?.minimums[c.id]; return <SelectItem value={c.id} key={c.id}>{c.id === "bnbbsc" ? "BNB (BSC) · Native coin" : c.name} · Est. min ${minimum?.minimumUsd.toFixed(2)}</SelectItem>; })}{eligibleUsdtNetworks.length > 0 && <SelectItem value="usdt">USDT · Choose network</SelectItem>}</SelectContent></Select>
+          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={value => { const choice = value as CurrencyChoice; setCurrency(choice); if (choice !== "usdt") setUsdtNetwork(null); }}><SelectTrigger data-testid="select-credit-currency"><SelectValue placeholder="Choose a payment method" /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.filter(c => !c.id.startsWith("usdt") && eligibleCryptoIds.includes(c.id)).map(c => <SelectItem value={c.id} key={c.id}>{c.id === "bnbbsc" ? "BNB (BSC) · Native coin" : c.name}</SelectItem>)}{eligibleUsdtNetworks.length > 0 && <SelectItem value="usdt">USDT · Choose network</SelectItem>}</SelectContent></Select>
             {minimumsLoading ? <p className="text-xs text-muted-foreground">Checking payment minimum estimates. Methods stay hidden until the lookup completes.</p> :
               minimumsError ? <div className="flex items-center justify-between gap-3"><p className="text-xs text-destructive">Couldn’t load payment estimates. No methods are available until lookup succeeds.</p><Button type="button" variant="outline" size="sm" onClick={() => refetchMinimums()}>Retry</Button></div> :
                 <p className="text-xs text-muted-foreground">Shown methods meet the current minimum estimate; final eligibility is confirmed when the top-up is created. Estimates do not guarantee provider acceptance. Send only on the selected network.</p>}
@@ -144,7 +144,6 @@ export function CreditTopup() {
             <legend className="text-sm font-medium">USDT network</legend>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {usdtNetworks.filter(network => eligibleUsdtNetworks.includes(network.id)).map(network => {
-                const minimum = minimumData?.minimums[network.id];
                 const selected = usdtNetwork === network.id;
                 return <button
                   key={network.id}
@@ -155,7 +154,6 @@ export function CreditTopup() {
                   data-testid={`button-credit-usdt-network-${network.id}`}
                 >
                   <span className="block text-sm font-medium">{network.label}</span>
-                  <span className="block text-xs text-muted-foreground">Est. min ${minimum?.minimumUsd.toFixed(2)}</span>
                 </button>;
               })}
             </div>
