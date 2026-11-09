@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useCryptoMinimums } from "@/hooks/use-crypto-minimums";
 import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@shared/payment-currencies";
+import { eligibleCurrencies, minimumRejectionKey } from "@/components/crypto-availability";
 
 type Topup = { id: string; status?: string; payment?: { payment_status?: string; pay_address?: string; pay_amount?: number; pay_currency?: string; price_amount?: number }; [key: string]: unknown };
 type CurrencyChoice = PaymentCurrency | "usdt";
@@ -30,6 +31,7 @@ export function CreditTopup() {
   const [usdtNetwork, setUsdtNetwork] = useState<PaymentCurrency | null>(null);
   const [topup, setTopup] = useState<Topup | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [minimumRejected, setMinimumRejected] = useState<Set<string>>(() => new Set());
   const idempotencyKeyRef = useRef<string | null>(null);
   const requestFingerprintRef = useRef<string | null>(null);
   const payment = topup?.payment;
@@ -37,7 +39,29 @@ export function CreditTopup() {
   const terminal = ["finished", "completed", "failed", "expired", "refunded"].includes(status);
   const dollars = Number(amount);
   const payCurrency = currency === "usdt" ? usdtNetwork : currency;
-  const { data: minimumData, isLoading: minimumsLoading } = useCryptoMinimums(!topup);
+  const {
+    data: minimumData,
+    isLoading: minimumsLoading,
+    isError: minimumsError,
+    refetch: refetchMinimums,
+  } = useCryptoMinimums(!topup);
+  const eligibleUsdtNetworks = eligibleCurrencies(
+    usdtNetworks.map(network => network.id),
+    dollars,
+    minimumsError || minimumsLoading ? undefined : minimumData?.minimums,
+    minimumRejected,
+    network => minimumRejectionKey(dollars, network),
+  );
+  const eligibleCryptoIds = eligibleCurrencies(
+    PAYMENT_CURRENCIES.filter(c => !c.id.startsWith("usdt")).map(c => c.id),
+    dollars,
+    minimumsError || minimumsLoading ? undefined : minimumData?.minimums,
+    minimumRejected,
+    crypto => minimumRejectionKey(dollars, crypto),
+  );
+  const selectedCurrencyAvailable = currency === "usdt"
+    ? eligibleUsdtNetworks.includes(usdtNetwork as typeof usdtNetworks[number]["id"])
+    : eligibleCryptoIds.includes(currency as PaymentCurrency);
 
   const { data: activity = [] } = useQuery<any[]>({
     queryKey: ["/api/credit/activity"],
@@ -58,12 +82,17 @@ export function CreditTopup() {
   }, [topup?.id, terminal, token]);
 
   const createTopup = async () => {
-    if (currency === "usdt" && !usdtNetwork) {
-      toast({ title: "Choose a USDT network", description: "Select BSC (BEP20), ERC20, or TRC20 before creating your top-up.", variant: "destructive" });
+    if (minimumsLoading || minimumsError) {
+      toast({ title: "Payment estimates are not ready", description: "Retry the minimum lookup before creating a top-up.", variant: "destructive" });
       return;
     }
     if (!Number.isFinite(dollars) || dollars < 1 || dollars > 10000) {
-      toast({ title: "Choose an amount between $1 and $10,000", variant: "destructive" }); return;
+      toast({ title: "Choose an amount between $1 and $10,000", variant: "destructive" });
+      return;
+    }
+    if (!selectedCurrencyAvailable || !payCurrency) {
+      toast({ title: "Choose an available payment method", description: "Select a method currently shown for this top-up amount.", variant: "destructive" });
+      return;
     }
     setSubmitting(true);
     try {
@@ -78,6 +107,13 @@ export function CreditTopup() {
       setTopup({ ...data.topup, payment: data.payment });
     } catch (e) {
       const message = (e as Error).message;
+      if (/minimum|minimal/i.test(message)) {
+        setMinimumRejected(previous => {
+          const next = new Set(previous);
+          next.add(minimumRejectionKey(dollars, payCurrency));
+          return next;
+        });
+      }
       toast({
         title: /minimum|minimal/i.test(message) ? "Amount is below the crypto minimum" : "Top-up could not be created",
         description: message,
@@ -99,11 +135,15 @@ export function CreditTopup() {
       <CardContent className="p-5 space-y-5">
         {!topup ? <><div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2"><Label htmlFor="credit-amount">Amount in USD</Label><Input id="credit-amount" type="number" min="1" max="10000" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} data-testid="input-credit-topup-amount" /><p className="text-xs text-muted-foreground">Minimum $1.00 · Maximum $10,000.00</p></div>
-          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={value => { const choice = value as CurrencyChoice; setCurrency(choice); if (choice !== "usdt") setUsdtNetwork(null); }}><SelectTrigger data-testid="select-credit-currency"><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.filter(c => !c.id.startsWith("usdt")).map(c => { const minimum = minimumData?.minimums[c.id]; return <SelectItem value={c.id} key={c.id}>{c.id === "bnbbsc" ? "BNB (BSC) · Native coin" : c.name}{minimum ? ` · Est. min $${minimum.minimumUsd.toFixed(2)}` : ""}</SelectItem>; })}<SelectItem value="usdt">USDT · Choose network</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">{minimumsLoading ? "Checking network estimates…" : "Minimums are estimates. NOWPayments checks the actual limit. Send only on the selected network."}</p></div>
+          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={value => { const choice = value as CurrencyChoice; setCurrency(choice); if (choice !== "usdt") setUsdtNetwork(null); }}><SelectTrigger data-testid="select-credit-currency"><SelectValue placeholder="Choose a payment method" /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.filter(c => !c.id.startsWith("usdt") && eligibleCryptoIds.includes(c.id)).map(c => { const minimum = minimumData?.minimums[c.id]; return <SelectItem value={c.id} key={c.id}>{c.id === "bnbbsc" ? "BNB (BSC) · Native coin" : c.name} · Est. min ${minimum?.minimumUsd.toFixed(2)}</SelectItem>; })}{eligibleUsdtNetworks.length > 0 && <SelectItem value="usdt">USDT · Choose network</SelectItem>}</SelectContent></Select>
+            {minimumsLoading ? <p className="text-xs text-muted-foreground">Checking payment minimum estimates. Methods stay hidden until the lookup completes.</p> :
+              minimumsError ? <div className="flex items-center justify-between gap-3"><p className="text-xs text-destructive">Couldn’t load payment estimates. No methods are available until lookup succeeds.</p><Button type="button" variant="outline" size="sm" onClick={() => refetchMinimums()}>Retry</Button></div> :
+                <p className="text-xs text-muted-foreground">Shown methods meet the current minimum estimate; final eligibility is confirmed when the top-up is created. Estimates do not guarantee provider acceptance. Send only on the selected network.</p>}
+          </div>
           {currency === "usdt" && <fieldset className="space-y-2 sm:col-span-2" aria-describedby="credit-usdt-network-hint">
             <legend className="text-sm font-medium">USDT network</legend>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {usdtNetworks.map(network => {
+              {usdtNetworks.filter(network => eligibleUsdtNetworks.includes(network.id)).map(network => {
                 const minimum = minimumData?.minimums[network.id];
                 const selected = usdtNetwork === network.id;
                 return <button
@@ -115,13 +155,14 @@ export function CreditTopup() {
                   data-testid={`button-credit-usdt-network-${network.id}`}
                 >
                   <span className="block text-sm font-medium">{network.label}</span>
-                  <span className="block text-xs text-muted-foreground">{minimum ? `Est. min $${minimum.minimumUsd.toFixed(2)}` : "Minimum estimate unavailable"}</span>
+                  <span className="block text-xs text-muted-foreground">Est. min ${minimum?.minimumUsd.toFixed(2)}</span>
                 </button>;
               })}
             </div>
             <p id="credit-usdt-network-hint" className="text-xs text-muted-foreground">BSC USDT is a token on BNB Smart Chain; it is not native BNB.</p>
           </fieldset>}
-        </div><Button onClick={createTopup} disabled={submitting || (currency === "usdt" && !usdtNetwork)} className="w-full gap-2" data-testid="button-create-credit-topup">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownLeft className="h-4 w-4" />} Create secure top-up</Button></> :
+          {!minimumsLoading && !minimumsError && eligibleCryptoIds.length === 0 && eligibleUsdtNetworks.length === 0 && <p className="text-xs text-muted-foreground sm:col-span-2">No payment methods are currently available for this amount. Change the amount or try again later.</p>}
+        </div><Button onClick={createTopup} disabled={submitting || minimumsLoading || minimumsError || !selectedCurrencyAvailable || !Number.isFinite(dollars) || dollars < 1 || dollars > 10000} className="w-full gap-2" data-testid="button-create-credit-topup">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownLeft className="h-4 w-4" />} Create secure top-up</Button></> :
         <div className="space-y-5">
           <div className="flex items-center justify-between"><Badge variant="outline" className="gap-2"><Clock3 className="h-3.5 w-3.5" />{label}</Badge><Button variant="ghost" size="sm" onClick={reset} data-testid="button-new-credit-topup">New top-up</Button></div>
           {status === "finished" || status === "completed" ? <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 flex gap-3"><CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" /><div><p className="font-medium">Your account credit is ready.</p><p className="text-sm text-muted-foreground">The balance will update automatically.</p></div></div> :

@@ -35,6 +35,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useCryptoMinimums } from "@/hooks/use-crypto-minimums";
 import QRCode from "react-qr-code";
+import { eligibleCurrencies, minimumRejectionKey } from "@/components/crypto-availability";
 
 interface ExistingOrder {
   orderId: string;
@@ -138,6 +139,7 @@ export function PaymentModal({
   const [email, setEmail] = useState("");
   const [selectedCrypto, setSelectedCrypto] = useState<CryptoOption>("btc");
   const [selectedUsdtNetwork, setSelectedUsdtNetwork] = useState<PaymentCurrency | null>(null);
+  const [minimumRejected, setMinimumRejected] = useState<Set<string>>(() => new Set());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("crypto");
   const [step, setStep] = useState<ModalStep>("form");
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
@@ -225,9 +227,40 @@ export function PaymentModal({
     : isCartCheckout
       ? cartItems.reduce((total, item) => total + item.price * item.quantity, 0)
       : (product ? product.price * quantity : 0);
-  const { data: minimumData, isLoading: minimumsLoading } = useCryptoMinimums(
+  const {
+    data: minimumData,
+    isLoading: minimumsLoading,
+    isError: minimumsError,
+    refetch: refetchMinimums,
+  } = useCryptoMinimums(
     open && step === "form",
   );
+  const eligibleUsdtNetworks = eligibleCurrencies(
+    usdtNetworks.map(network => network.id),
+    totalAmount,
+    minimumsError || minimumsLoading ? undefined : minimumData?.minimums,
+    minimumRejected,
+    currency => minimumRejectionKey(totalAmount, currency),
+  );
+  const eligibleCryptoIds = eligibleCurrencies(
+    cryptoOptions.filter(option => option.id !== "usdt").map(option => option.id),
+    totalAmount,
+    minimumsError || minimumsLoading ? undefined : minimumData?.minimums,
+    minimumRejected,
+    currency => minimumRejectionKey(totalAmount, currency),
+  );
+  const availableCryptoOptions = cryptoOptions.filter(option =>
+    option.id === "usdt"
+      ? eligibleUsdtNetworks.length > 0
+      : eligibleCryptoIds.includes(option.id),
+  );
+  const creditBalanceCents = Number((user as any)?.creditBalanceCents);
+  const creditAvailable = !!user
+    && Number.isFinite(creditBalanceCents)
+    && creditBalanceCents >= Math.round(totalAmount * 100);
+  const selectedCryptoAvailable = selectedCrypto === "usdt"
+    ? eligibleUsdtNetworks.includes(selectedUsdtNetwork as typeof usdtNetworks[number]["id"])
+    : eligibleCryptoIds.includes(selectedCrypto as PaymentCurrency);
 
   const stopPolling = useCallback(() => {
     if (pollingRef.current) {
@@ -390,10 +423,22 @@ export function PaymentModal({
   if (!product && !existingOrder && !isCartCheckout) return null;
 
   const handleCreatePayment = async () => {
-    if (paymentMethod === "crypto" && selectedCrypto === "usdt" && !selectedUsdtNetwork) {
+    if (paymentMethod === "crypto" && (minimumsLoading || minimumsError)) {
       toast({
-        title: "Choose a USDT network",
-        description: "Select BSC (BEP20), ERC20, or TRC20 before creating your payment.",
+        title: "Payment estimates are not ready",
+        description: "Retry the minimum lookup before choosing a payment method.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (paymentMethod === "credit" && !creditAvailable) {
+      toast({ title: "Account credit unavailable", description: "Your balance must cover the full order total.", variant: "destructive" });
+      return;
+    }
+    if (paymentMethod === "crypto" && !selectedCryptoAvailable) {
+      toast({
+        title: "Choose an available payment method",
+        description: "Select a method currently shown for this order total.",
         variant: "destructive",
       });
       return;
@@ -464,6 +509,10 @@ export function PaymentModal({
       console.error("Payment creation error:", error);
       setStep("error");
       const msg = error.message || "Failed to create payment. Please try again.";
+      const rejectedCurrency = selectedCrypto === "usdt" ? selectedUsdtNetwork : selectedCrypto;
+      if (paymentMethod === "crypto" && rejectedCurrency && /minimum|minimal/i.test(msg)) {
+        setMinimumRejected(previous => new Set(previous).add(minimumRejectionKey(totalAmount, rejectedCurrency)));
+      }
       setErrorMessage(msg.includes("<") || msg.length > 300 ? "Failed to create payment. Please try again." : msg);
     }
   };
@@ -651,11 +700,10 @@ export function PaymentModal({
               <div className="space-y-3">
                 <Label className="text-sm text-gray-500 dark:text-[hsl(0_0%_60%)] font-medium">Payment Method</Label>
                 <div className="grid grid-cols-3 gap-2">
-                  {user && <button onClick={() => setPaymentMethod("credit")} className={`relative col-span-3 flex items-center justify-between gap-3 rounded-xl border p-3 text-left transition-all ${paymentMethod === "credit" ? "border-primary/40 bg-primary/[0.08]" : "border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]"}`} data-testid="button-payment-credit">
-                    <span className="flex items-center gap-3"><CreditCard className="h-5 w-5 text-primary" /><span><span className="block text-sm font-medium">Account credit</span><span className="text-xs text-gray-500">Available: ${(((user as any).creditBalanceCents || 0) / 100).toFixed(2)}</span></span></span>
-                    {((user as any).creditBalanceCents || 0) < Math.round(totalAmount * 100) && <span className="text-xs text-destructive">Insufficient balance</span>}
+                  {creditAvailable && <button type="button" onClick={() => setPaymentMethod("credit")} className={`relative col-span-3 flex items-center justify-between gap-3 rounded-xl border p-3 text-left transition-all ${paymentMethod === "credit" ? "border-primary/40 bg-primary/[0.08]" : "border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]"}`} data-testid="button-payment-credit">
+                    <span className="flex items-center gap-3"><CreditCard className="h-5 w-5 text-primary" /><span><span className="block text-sm font-medium">Account credit</span><span className="text-xs text-gray-500">Available: ${(creditBalanceCents / 100).toFixed(2)}</span></span></span>
                   </button>}
-                  {cryptoOptions.map((crypto) => {
+                  {availableCryptoOptions.map((crypto) => {
                     const minimum = crypto.id === "usdt"
                       ? undefined
                       : minimumData?.minimums[crypto.id];
@@ -704,7 +752,7 @@ export function PaymentModal({
                   <fieldset className="space-y-2" aria-describedby="usdt-network-hint">
                     <legend className="text-xs font-medium text-gray-600 dark:text-white/70">USDT network</legend>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {usdtNetworks.map(network => {
+                      {usdtNetworks.filter(network => eligibleUsdtNetworks.includes(network.id)).map(network => {
                         const minimum = minimumData?.minimums[network.id];
                         const selected = selectedUsdtNetwork === network.id;
                         return (
@@ -721,9 +769,7 @@ export function PaymentModal({
                             data-testid={`button-usdt-network-${network.id}`}
                           >
                             <span className="block text-xs font-semibold">{network.label}</span>
-                            <span className="mt-1 block text-[10px] text-gray-400">
-                              {minimum ? `Est. min $${minimum.minimumUsd.toFixed(2)}` : "Minimum estimate unavailable"}
-                            </span>
+                            <span className="mt-1 block text-[10px] text-gray-400">Est. min ${minimum?.minimumUsd.toFixed(2)}</span>
                           </button>
                         );
                       })}
@@ -733,16 +779,27 @@ export function PaymentModal({
                     </p>
                   </fieldset>
                 )}
-                 <p className="text-[11px] text-gray-400">
-                   {minimumsLoading ? "Checking network estimates…" : "Minimums shown are estimates. NOWPayments checks the actual limit when creating your payment. Send only on the selected network."}
-                 </p>
+                 {minimumsLoading ? (
+                   <p className="text-[11px] text-gray-400">Checking payment minimum estimates… Methods stay hidden until the lookup completes.</p>
+                 ) : minimumsError ? (
+                   <div className="flex items-center justify-between gap-3 text-[11px] text-destructive">
+                     <span>Couldn’t load payment estimates. No crypto methods are available until lookup succeeds.</span>
+                     <Button type="button" variant="outline" size="sm" onClick={() => refetchMinimums()}>Retry</Button>
+                   </div>
+                 ) : (
+                   <p className="text-[11px] text-gray-400">Shown methods meet the current minimum estimate; final eligibility is confirmed when the payment is created. Estimates do not guarantee provider acceptance. Send only on the selected network.</p>
+                 )}
+                 {!minimumsLoading && !minimumsError && availableCryptoOptions.length === 0 && !creditAvailable && (
+                   <p className="text-[11px] text-gray-500">No payment methods are currently available for this order total. Try again later.</p>
+                 )}
               </div>
 
               <Button
                 onClick={handleCreatePayment}
                 disabled={
-                  (paymentMethod === "crypto" && selectedCrypto === "usdt" && !selectedUsdtNetwork) ||
-                  (paymentMethod === "credit" && ((user as any)?.creditBalanceCents || 0) < Math.round(totalAmount * 100))
+                  (paymentMethod === "crypto" && (minimumsLoading || minimumsError)) ||
+                  (paymentMethod === "crypto" && !selectedCryptoAvailable) ||
+                  (paymentMethod === "credit" && !creditAvailable)
                 }
                 size="lg"
                 className="w-full gap-2.5 bg-primary text-white font-bold uppercase tracking-wider text-sm shadow-lg shadow-primary/25"
