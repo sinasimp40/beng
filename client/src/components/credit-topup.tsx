@@ -11,9 +11,10 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isBelowCryptoMinimum, useCryptoMinimums } from "@/hooks/use-crypto-minimums";
+import { PAYMENT_CURRENCIES } from "@shared/payment-currencies";
 
 type Topup = { id: string; status?: string; payment?: { payment_status?: string; pay_address?: string; pay_amount?: number; pay_currency?: string; price_amount?: number }; [key: string]: unknown };
-const currencies = ["btc", "eth", "usdt", "ltc", "sol", "bnb", "xrp", "doge", "xmr"];
+const currencies = PAYMENT_CURRENCIES.map(currency => currency.id);
 const money = (cents: number) => `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function CreditTopup() {
@@ -106,7 +107,7 @@ export function CreditTopup() {
       <CardContent className="p-5 space-y-5">
         {!topup ? <><div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2"><Label htmlFor="credit-amount">Amount in USD</Label><Input id="credit-amount" type="number" min="1" max="10000" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} data-testid="input-credit-topup-amount" /><p className="text-xs text-muted-foreground">Minimum $1.00 · Maximum $10,000.00</p></div>
-          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={setCurrency}><SelectTrigger data-testid="select-credit-currency"><SelectValue /></SelectTrigger><SelectContent>{currencies.map(c => { const minimum = minimumData?.minimums[c]; const disabled = isBelowCryptoMinimum(dollars, minimum); return <SelectItem value={c} key={c} disabled={disabled} className={disabled ? "opacity-40" : ""}>{c.toUpperCase()}{minimum ? ` · Min $${minimum.minimumUsd.toFixed(2)}` : ""}</SelectItem>; })}</SelectContent></Select><p className="text-xs text-muted-foreground">{minimumsLoading ? "Checking live network minimums…" : "Unavailable currencies are disabled automatically."}</p></div>
+          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={setCurrency}><SelectTrigger data-testid="select-credit-currency"><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.map(c => { const minimum = minimumData?.minimums[c.id]; const disabled = isBelowCryptoMinimum(dollars, minimum); return <SelectItem value={c.id} key={c.id} disabled={disabled} className={disabled ? "opacity-40" : ""}>{c.name}{minimum ? ` · Min $${minimum.minimumUsd.toFixed(2)}` : ""}</SelectItem>; })}</SelectContent></Select><p className="text-xs text-muted-foreground">{minimumsLoading ? "Checking live network minimums…" : "Send funds only on the network you selected."}</p></div>
         </div><Button onClick={createTopup} disabled={submitting || minimumsLoading || selectedCurrencyUnavailable} className="w-full gap-2" data-testid="button-create-credit-topup">{submitting || minimumsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownLeft className="h-4 w-4" />} {minimumsLoading ? "Checking minimums…" : "Create secure top-up"}</Button></> :
         <div className="space-y-5">
           <div className="flex items-center justify-between"><Badge variant="outline" className="gap-2"><Clock3 className="h-3.5 w-3.5" />{label}</Badge><Button variant="ghost" size="sm" onClick={reset} data-testid="button-new-credit-topup">New top-up</Button></div>

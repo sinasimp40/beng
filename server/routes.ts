@@ -6,6 +6,7 @@ import { InsufficientStockError, storage } from "./storage";
 import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema, type CreditTransaction } from "@shared/schema";
 import { z } from "zod";
 import { nowPaymentsService } from "./nowpayments";
+import { PAYMENT_CURRENCIES } from "@shared/payment-currencies";
 import { emailService } from "./email";
 import { creditStorage, CreditOperationError, InsufficientCreditError } from "./creditStorage";
 import { verifyRecaptcha, hashPassword, verifyPassword, generateSessionToken, needsRehash } from "./auth";
@@ -2143,7 +2144,7 @@ export async function registerRoutes(
     if (!nowPaymentsService.isConfigured()) {
       return res.status(400).json({ error: "Payment gateway not configured" });
     }
-    const currencies = ["btc", "eth", "usdt", "ltc", "sol", "bnb", "xrp", "doge", "xmr"];
+    const currencies = PAYMENT_CURRENCIES.map(currency => currency.id);
     const results = await Promise.allSettled(
       currencies.map(currency => nowPaymentsService.getMinimumPaymentAmount(currency, "usd")),
     );

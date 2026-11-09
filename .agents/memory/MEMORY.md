@@ -1,3 +1,4 @@
 - [Digital fulfillment integrity](digital-fulfillment-integrity.md) — claim stock and email dispatch through separate durable database ownership steps.
 - [Account-credit integrity](account-credit-integrity.md) — serialize balance ownership, fingerprint retries, and reconcile completed crypto top-ups for later refunds.
 - [Post-merge dependency safety](post-merge-dependency-safety.md) — keep the setup hook complete; resolve firewall blocks by updating the direct parent dependency.
+- [Payment network identifiers](payment-network-identifiers.md) — NOWPayments' current currency list takes precedence over obsolete codes in documentation examples.

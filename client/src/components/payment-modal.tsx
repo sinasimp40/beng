@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Product } from "@shared/schema";
+import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@shared/payment-currencies";
 import type { CartItem } from "@/lib/cart";
 import { useAuth } from "@/lib/auth";
 import {
@@ -65,7 +66,7 @@ interface PaymentModalProps {
 }
 
 type ModalStep = "form" | "processing" | "awaiting_payment" | "confirming" | "success" | "error" | "expired";
-type CryptoOption = "btc" | "eth" | "ltc" | "usdt" | "doge" | "xmr" | "xrp" | "bnb" | "sol";
+type CryptoOption = PaymentCurrency;
 type PaymentMethod = "crypto" | "credit";
 
 interface PaymentData {
@@ -80,17 +81,21 @@ interface PaymentData {
   order_id?: string;
 }
 
-const cryptoOptions: { id: CryptoOption; name: string; icon: React.ReactNode; uriPrefix: string }[] = [
-  { id: "btc", name: "Bitcoin", icon: <SiBitcoin className="w-5 h-5 text-orange-500" />, uriPrefix: "bitcoin" },
-  { id: "eth", name: "Ethereum", icon: <SiEthereum className="w-5 h-5 text-blue-400" />, uriPrefix: "ethereum" },
-  { id: "usdt", name: "USDT", icon: <span className="text-green-500 font-bold text-sm">$</span>, uriPrefix: "usdt" },
-  { id: "ltc", name: "Litecoin", icon: <SiLitecoin className="w-5 h-5 text-gray-400" />, uriPrefix: "litecoin" },
-  { id: "sol", name: "Solana", icon: <SiSolana className="w-5 h-5 text-purple-400" />, uriPrefix: "solana" },
-  { id: "bnb", name: "BNB", icon: <SiBinance className="w-5 h-5 text-yellow-500" />, uriPrefix: "bnb" },
-  { id: "xrp", name: "XRP", icon: <SiRipple className="w-5 h-5 text-blue-300" />, uriPrefix: "ripple" },
-  { id: "doge", name: "Dogecoin", icon: <SiDogecoin className="w-5 h-5 text-yellow-400" />, uriPrefix: "dogecoin" },
-  { id: "xmr", name: "Monero", icon: <SiMonero className="w-5 h-5 text-orange-400" />, uriPrefix: "monero" },
-];
+const cryptoIcons: Record<string, React.ReactNode> = {
+  btc: <SiBitcoin className="w-5 h-5 text-orange-500" />,
+  eth: <SiEthereum className="w-5 h-5 text-blue-400" />,
+  usdt: <span className="text-green-500 font-bold text-sm">$</span>,
+  ltc: <SiLitecoin className="w-5 h-5 text-gray-400" />,
+  sol: <SiSolana className="w-5 h-5 text-purple-400" />,
+  bnb: <SiBinance className="w-5 h-5 text-yellow-500" />,
+  xrp: <SiRipple className="w-5 h-5 text-blue-300" />,
+  doge: <SiDogecoin className="w-5 h-5 text-yellow-400" />,
+  xmr: <SiMonero className="w-5 h-5 text-orange-400" />,
+};
+const cryptoOptions = PAYMENT_CURRENCIES.map(currency => ({
+  ...currency,
+  icon: cryptoIcons[currency.symbol],
+}));
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   waiting: { label: "Waiting for payment", color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30", icon: <Clock className="w-4 h-4" /> },
@@ -682,7 +687,7 @@ export function PaymentModal({
                   })}
                 </div>
                  <p className="text-[11px] text-gray-400">
-                   {minimumsLoading ? "Checking live network minimums…" : "Currencies above this order amount are disabled automatically."}
+                   {minimumsLoading ? "Checking live network minimums…" : "Currencies above this order amount are disabled automatically. Send funds only on the network you selected."}
                  </p>
               </div>
 
