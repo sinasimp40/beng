@@ -11,16 +11,23 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useCryptoMinimums } from "@/hooks/use-crypto-minimums";
-import { PAYMENT_CURRENCIES } from "@shared/payment-currencies";
+import { PAYMENT_CURRENCIES, type PaymentCurrency } from "@shared/payment-currencies";
 
 type Topup = { id: string; status?: string; payment?: { payment_status?: string; pay_address?: string; pay_amount?: number; pay_currency?: string; price_amount?: number }; [key: string]: unknown };
+type CurrencyChoice = PaymentCurrency | "usdt";
 const money = (cents: number) => `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const usdtNetworks: Array<{ id: Extract<PaymentCurrency, "usdtbsc" | "usdterc20" | "usdttrc20">; label: string }> = [
+  { id: "usdtbsc", label: "BSC (BEP20)" },
+  { id: "usdterc20", label: "ERC20" },
+  { id: "usdttrc20", label: "TRC20" },
+];
 
 export function CreditTopup() {
   const { token } = useAuth();
   const { toast } = useToast();
   const [amount, setAmount] = useState("25");
-  const [currency, setCurrency] = useState("btc");
+  const [currency, setCurrency] = useState<CurrencyChoice>("btc");
+  const [usdtNetwork, setUsdtNetwork] = useState<PaymentCurrency | null>(null);
   const [topup, setTopup] = useState<Topup | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const idempotencyKeyRef = useRef<string | null>(null);
@@ -29,6 +36,7 @@ export function CreditTopup() {
   const status = String(payment?.payment_status || topup?.status || "waiting");
   const terminal = ["finished", "completed", "failed", "expired", "refunded"].includes(status);
   const dollars = Number(amount);
+  const payCurrency = currency === "usdt" ? usdtNetwork : currency;
   const { data: minimumData, isLoading: minimumsLoading } = useCryptoMinimums(!topup);
 
   const { data: activity = [] } = useQuery<any[]>({
@@ -50,18 +58,22 @@ export function CreditTopup() {
   }, [topup?.id, terminal, token]);
 
   const createTopup = async () => {
+    if (currency === "usdt" && !usdtNetwork) {
+      toast({ title: "Choose a USDT network", description: "Select BSC (BEP20), ERC20, or TRC20 before creating your top-up.", variant: "destructive" });
+      return;
+    }
     if (!Number.isFinite(dollars) || dollars < 1 || dollars > 10000) {
       toast({ title: "Choose an amount between $1 and $10,000", variant: "destructive" }); return;
     }
     setSubmitting(true);
     try {
-      const requestFingerprint = `${Math.round(dollars * 100)}:${currency.toLowerCase()}`;
+      const requestFingerprint = `${Math.round(dollars * 100)}:${payCurrency!.toLowerCase()}`;
       if (requestFingerprintRef.current !== requestFingerprint) {
         requestFingerprintRef.current = requestFingerprint;
         idempotencyKeyRef.current = crypto.randomUUID();
       }
       const idempotencyKey = idempotencyKeyRef.current!;
-      const res = await apiRequest("POST", "/api/credit/topups", { amountCents: Math.round(dollars * 100), payCurrency: currency }, { "X-Idempotency-Key": idempotencyKey });
+      const res = await apiRequest("POST", "/api/credit/topups", { amountCents: Math.round(dollars * 100), payCurrency }, { "X-Idempotency-Key": idempotencyKey });
       const data = await res.json();
       setTopup({ ...data.topup, payment: data.payment });
     } catch (e) {
@@ -87,8 +99,29 @@ export function CreditTopup() {
       <CardContent className="p-5 space-y-5">
         {!topup ? <><div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2"><Label htmlFor="credit-amount">Amount in USD</Label><Input id="credit-amount" type="number" min="1" max="10000" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} data-testid="input-credit-topup-amount" /><p className="text-xs text-muted-foreground">Minimum $1.00 · Maximum $10,000.00</p></div>
-          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={setCurrency}><SelectTrigger data-testid="select-credit-currency"><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.map(c => { const minimum = minimumData?.minimums[c.id]; return <SelectItem value={c.id} key={c.id}>{c.name}{minimum ? ` · Est. min $${minimum.minimumUsd.toFixed(2)}` : ""}</SelectItem>; })}</SelectContent></Select><p className="text-xs text-muted-foreground">{minimumsLoading ? "Checking network estimates…" : "Minimums are estimates. NOWPayments checks the actual limit. Send only on the selected network."}</p></div>
-        </div><Button onClick={createTopup} disabled={submitting} className="w-full gap-2" data-testid="button-create-credit-topup">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownLeft className="h-4 w-4" />} Create secure top-up</Button></> :
+          <div className="space-y-2"><Label>Pay with</Label><Select value={currency} onValueChange={value => { const choice = value as CurrencyChoice; setCurrency(choice); if (choice !== "usdt") setUsdtNetwork(null); }}><SelectTrigger data-testid="select-credit-currency"><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_CURRENCIES.filter(c => !c.id.startsWith("usdt")).map(c => { const minimum = minimumData?.minimums[c.id]; return <SelectItem value={c.id} key={c.id}>{c.id === "bnbbsc" ? "BNB (BSC) · Native coin" : c.name}{minimum ? ` · Est. min $${minimum.minimumUsd.toFixed(2)}` : ""}</SelectItem>; })}<SelectItem value="usdt">USDT · Choose network</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">{minimumsLoading ? "Checking network estimates…" : "Minimums are estimates. NOWPayments checks the actual limit. Send only on the selected network."}</p></div>
+          {currency === "usdt" && <fieldset className="space-y-2 sm:col-span-2" aria-describedby="credit-usdt-network-hint">
+            <legend className="text-sm font-medium">USDT network</legend>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {usdtNetworks.map(network => {
+                const minimum = minimumData?.minimums[network.id];
+                const selected = usdtNetwork === network.id;
+                return <button
+                  key={network.id}
+                  type="button"
+                  onClick={() => setUsdtNetwork(network.id)}
+                  aria-pressed={selected}
+                  className={`min-w-0 rounded-md border px-3 py-2.5 text-left transition-colors ${selected ? "border-primary bg-primary/10 text-foreground" : "border-border bg-muted/30 text-muted-foreground hover:border-primary/50"}`}
+                  data-testid={`button-credit-usdt-network-${network.id}`}
+                >
+                  <span className="block text-sm font-medium">{network.label}</span>
+                  <span className="block text-xs text-muted-foreground">{minimum ? `Est. min $${minimum.minimumUsd.toFixed(2)}` : "Minimum estimate unavailable"}</span>
+                </button>;
+              })}
+            </div>
+            <p id="credit-usdt-network-hint" className="text-xs text-muted-foreground">BSC USDT is a token on BNB Smart Chain; it is not native BNB.</p>
+          </fieldset>}
+        </div><Button onClick={createTopup} disabled={submitting || (currency === "usdt" && !usdtNetwork)} className="w-full gap-2" data-testid="button-create-credit-topup">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownLeft className="h-4 w-4" />} Create secure top-up</Button></> :
         <div className="space-y-5">
           <div className="flex items-center justify-between"><Badge variant="outline" className="gap-2"><Clock3 className="h-3.5 w-3.5" />{label}</Badge><Button variant="ghost" size="sm" onClick={reset} data-testid="button-new-credit-topup">New top-up</Button></div>
           {status === "finished" || status === "completed" ? <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 flex gap-3"><CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" /><div><p className="font-medium">Your account credit is ready.</p><p className="text-sm text-muted-foreground">The balance will update automatically.</p></div></div> :

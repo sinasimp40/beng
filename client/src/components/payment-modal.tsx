@@ -66,7 +66,7 @@ interface PaymentModalProps {
 }
 
 type ModalStep = "form" | "processing" | "awaiting_payment" | "confirming" | "success" | "error" | "expired";
-type CryptoOption = PaymentCurrency;
+type CryptoOption = PaymentCurrency | "usdt";
 type PaymentMethod = "crypto" | "credit";
 
 interface PaymentData {
@@ -92,10 +92,24 @@ const cryptoIcons: Record<string, React.ReactNode> = {
   doge: <SiDogecoin className="w-5 h-5 text-yellow-400" />,
   xmr: <SiMonero className="w-5 h-5 text-orange-400" />,
 };
-const cryptoOptions = PAYMENT_CURRENCIES.map(currency => ({
-  ...currency,
-  icon: cryptoIcons[currency.symbol],
-}));
+const cryptoOptions = [
+  ...PAYMENT_CURRENCIES.filter(currency => !currency.id.startsWith("usdt")).map(currency => ({
+    ...currency,
+    icon: cryptoIcons[currency.symbol],
+  })),
+  {
+    id: "usdt" as const,
+    name: "USDT",
+    symbol: "usdt",
+    uriPrefix: "usdt",
+    icon: cryptoIcons.usdt,
+  },
+];
+const usdtNetworks: Array<{ id: Extract<PaymentCurrency, "usdtbsc" | "usdterc20" | "usdttrc20">; label: string }> = [
+  { id: "usdtbsc", label: "BSC (BEP20)" },
+  { id: "usdterc20", label: "ERC20" },
+  { id: "usdttrc20", label: "TRC20" },
+];
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   waiting: { label: "Waiting for payment", color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30", icon: <Clock className="w-4 h-4" /> },
@@ -123,6 +137,7 @@ export function PaymentModal({
   const { user } = useAuth();
   const [email, setEmail] = useState("");
   const [selectedCrypto, setSelectedCrypto] = useState<CryptoOption>("btc");
+  const [selectedUsdtNetwork, setSelectedUsdtNetwork] = useState<PaymentCurrency | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("crypto");
   const [step, setStep] = useState<ModalStep>("form");
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
@@ -375,6 +390,15 @@ export function PaymentModal({
   if (!product && !existingOrder && !isCartCheckout) return null;
 
   const handleCreatePayment = async () => {
+    if (paymentMethod === "crypto" && selectedCrypto === "usdt" && !selectedUsdtNetwork) {
+      toast({
+        title: "Choose a USDT network",
+        description: "Select BSC (BEP20), ERC20, or TRC20 before creating your payment.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (!email) {
       toast({
         title: "Email required",
@@ -409,7 +433,7 @@ export function PaymentModal({
       
       const response = await apiRequest("POST", "/api/payments/create", {
         amount: totalAmount,
-        currency: selectedCrypto,
+        currency: paymentMethod === "credit" ? "btc" : selectedCrypto === "usdt" ? selectedUsdtNetwork : selectedCrypto,
         orderId: newOrderId,
         email,
         productName: displayName,
@@ -511,7 +535,9 @@ export function PaymentModal({
     setShowCloseWarning(false);
   };
 
-  const selectedCryptoInfo = cryptoOptions.find(c => c.id === selectedCrypto);
+  const paymentCurrency = paymentData?.pay_currency || (selectedCrypto === "usdt" ? selectedUsdtNetwork : selectedCrypto);
+  const selectedCryptoInfo = PAYMENT_CURRENCIES.find(c => c.id === paymentCurrency);
+  const paymentIcon = selectedCryptoInfo ? cryptoIcons[selectedCryptoInfo.symbol] : undefined;
   const currentStatus = paymentData?.payment_status
     ? (statusConfig[paymentData.payment_status] || statusConfig.waiting)
     : statusConfig.waiting;
@@ -521,8 +547,10 @@ export function PaymentModal({
     if (!paymentData?.pay_address || !paymentData?.pay_amount) {
       return paymentData?.pay_address || "";
     }
-    const cryptoInfo = cryptoOptions.find(c => c.id === selectedCrypto);
-    const prefix = cryptoInfo?.uriPrefix || selectedCrypto;
+    const cryptoInfo = paymentCurrency
+      ? PAYMENT_CURRENCIES.find(c => c.id === paymentCurrency)
+      : cryptoOptions.find(c => c.id === selectedCrypto);
+    const prefix = cryptoInfo?.uriPrefix || paymentCurrency || selectedCrypto;
     return `${prefix}:${paymentData.pay_address}?amount=${paymentData.pay_amount}`;
   };
 
@@ -628,23 +656,31 @@ export function PaymentModal({
                     {((user as any).creditBalanceCents || 0) < Math.round(totalAmount * 100) && <span className="text-xs text-destructive">Insufficient balance</span>}
                   </button>}
                   {cryptoOptions.map((crypto) => {
-                    const minimum = minimumData?.minimums[crypto.id];
+                    const minimum = crypto.id === "usdt"
+                      ? undefined
+                      : minimumData?.minimums[crypto.id];
+                    const isSelected = selectedCrypto === crypto.id;
                     return (
                     <button
                       key={crypto.id}
                        type="button"
-                       onClick={() => { setSelectedCrypto(crypto.id); setPaymentMethod("crypto"); }}
+                        onClick={() => {
+                          setSelectedCrypto(crypto.id);
+                          setPaymentMethod("crypto");
+                          if (crypto.id !== "usdt") setSelectedUsdtNetwork(null);
+                        }}
                        aria-label={crypto.name}
+                        aria-pressed={isSelected}
                       className={`
                         relative flex flex-col items-center gap-2 py-3 px-2 rounded-xl border transition-all duration-200
-                         ${selectedCrypto === crypto.id
+                          ${isSelected
                           ? "bg-primary/[0.08] border-primary/30 shadow-[0_0_20px_-4px] shadow-primary/20" 
                           : "bg-gray-50 dark:bg-white/[0.02] border-gray-200 dark:border-white/[0.06] hover-elevate"
                         }
                       `}
                       data-testid={`button-crypto-${crypto.id}`}
                     >
-                       {selectedCrypto === crypto.id && (
+                        {isSelected && (
                         <div className="absolute top-1.5 right-1.5">
                           <div className="relative flex items-center justify-center w-2.5 h-2.5">
                             <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-40 animate-ping" />
@@ -652,17 +688,51 @@ export function PaymentModal({
                           </div>
                         </div>
                       )}
-                      <div className={`transition-transform duration-200 ${selectedCrypto === crypto.id ? "scale-110" : ""}`}>
+                      <div className={`transition-transform duration-200 ${isSelected ? "scale-110" : ""}`}>
                         {crypto.icon}
                       </div>
-                      <span className={`text-[11px] font-medium transition-colors ${selectedCrypto === crypto.id ? "text-gray-900 dark:text-white" : "text-gray-500 dark:text-[hsl(0_0%_45%)]"}`}>
-                        {crypto.name}
+                      <span className={`text-[11px] font-medium transition-colors ${isSelected ? "text-gray-900 dark:text-white" : "text-gray-500 dark:text-[hsl(0_0%_45%)]"}`}>
+                        {crypto.id === "bnbbsc" ? "BNB (BSC) · Native coin" : crypto.name}
                       </span>
                        {minimum && <span className="text-[9px] text-gray-400">Est. min ${minimum.minimumUsd.toFixed(2)}</span>}
+                       {crypto.id === "usdt" && <span className="text-[9px] text-gray-400">Choose network below</span>}
                     </button>
                     );
                   })}
                 </div>
+                {selectedCrypto === "usdt" && (
+                  <fieldset className="space-y-2" aria-describedby="usdt-network-hint">
+                    <legend className="text-xs font-medium text-gray-600 dark:text-white/70">USDT network</legend>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {usdtNetworks.map(network => {
+                        const minimum = minimumData?.minimums[network.id];
+                        const selected = selectedUsdtNetwork === network.id;
+                        return (
+                          <button
+                            key={network.id}
+                            type="button"
+                            onClick={() => setSelectedUsdtNetwork(network.id)}
+                            aria-pressed={selected}
+                            className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                              selected
+                                ? "border-primary/40 bg-primary/[0.08] text-gray-900 dark:text-white"
+                                : "border-gray-200 bg-gray-50 text-gray-600 hover:border-primary/30 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-white/70"
+                            }`}
+                            data-testid={`button-usdt-network-${network.id}`}
+                          >
+                            <span className="block text-xs font-semibold">{network.label}</span>
+                            <span className="mt-1 block text-[10px] text-gray-400">
+                              {minimum ? `Est. min $${minimum.minimumUsd.toFixed(2)}` : "Minimum estimate unavailable"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p id="usdt-network-hint" className="text-[10px] text-gray-400">
+                      BSC USDT is a token on BNB Smart Chain; it is not native BNB.
+                    </p>
+                  </fieldset>
+                )}
                  <p className="text-[11px] text-gray-400">
                    {minimumsLoading ? "Checking network estimates…" : "Minimums shown are estimates. NOWPayments checks the actual limit when creating your payment. Send only on the selected network."}
                  </p>
@@ -671,6 +741,7 @@ export function PaymentModal({
               <Button
                 onClick={handleCreatePayment}
                 disabled={
+                  (paymentMethod === "crypto" && selectedCrypto === "usdt" && !selectedUsdtNetwork) ||
                   (paymentMethod === "credit" && ((user as any)?.creditBalanceCents || 0) < Math.round(totalAmount * 100))
                 }
                 size="lg"
@@ -703,10 +774,12 @@ export function PaymentModal({
             <div className="flex items-center justify-between px-6 pt-6 pb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 border border-primary/30 flex items-center justify-center">
-                  {selectedCryptoInfo?.icon}
+                  {paymentIcon}
                 </div>
                 <div>
-                  <h3 className="text-gray-900 dark:text-white font-semibold text-lg">Send {selectedCrypto.toUpperCase()}</h3>
+                  <h3 className="text-gray-900 dark:text-white font-semibold text-lg">
+                    Send {selectedCryptoInfo?.name || paymentCurrency?.toUpperCase()}
+                  </h3>
                   <button 
                     onClick={copyOrderId}
                     className="text-xs text-gray-500 hover:text-gray-400 font-mono transition-colors"
