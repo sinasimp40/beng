@@ -18,7 +18,7 @@ describe("NOWPayments network-specific currencies", () => {
     }
   });
 
-  for (const currency of PAYMENT_CURRENCIES.filter(c => c.symbol === "bnb" || c.symbol === "usdt")) {
+  for (const currency of PAYMENT_CURRENCIES) {
     it(`uses ${currency.id} consistently for minimums and payment creation`, async () => {
       const service = new NowPaymentsService();
       const calls: { url: string; init?: RequestInit }[] = [];
@@ -34,13 +34,14 @@ describe("NOWPayments network-specific currencies", () => {
       assert.equal(minimumUrl.searchParams.get("currency_from"), currency.id);
       assert.equal(minimumUrl.searchParams.get("currency_to"), currency.id);
       const payment = await service.createPayment({
-        price_amount: 50,
+        price_amount: 0.01,
         price_currency: "usd",
         pay_currency: currency.id,
         order_id: "unit-test-order",
       });
       assert.equal(calls[1].init?.method, "POST");
       assert.equal(JSON.parse(String(calls[1].init?.body)).pay_currency, currency.id);
+      assert.equal(JSON.parse(String(calls[1].init?.body)).price_amount, 0.01);
       assert.equal(payment.pay_currency, currency.id);
     });
   }

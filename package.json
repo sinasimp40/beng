@@ -10,7 +10,7 @@
     "check": "tsc",
     "test": "npm run test:payments && npm run test:integration",
     "test:payments": "node --import tsx --test server/nowpayments.test.ts",
-    "test:integration": "node --import tsx --test server/credit.test.ts server/fulfillment.test.ts",
+    "test:integration": "node --import tsx --test server/credit.test.ts server/fulfillment.test.ts server/checkout.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

@@ -91,6 +91,21 @@ after(async () => {
 });
 
 describe("account credit integrity", () => {
+  it("purchases a one-cent product with exactly one cent of credit", async () => {
+    const user = await createUser(1);
+    const product = await createProduct(0.01, ["cent-test-stock"]);
+    const result = await creditStorage.purchaseWithCredit({
+      orderId: newOrderId(),
+      userId: user.id,
+      ipAddress: "127.0.0.1",
+      lines: [{ productId: product.id, quantity: 1 }],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(result.transaction.amountCents, -1);
+    assert.equal((await db.select().from(users).where(eq(users.id, user.id)))[0].creditBalanceCents, 0);
+    assert.equal((await db.select().from(products).where(eq(products.id, product.id)))[0].stock, 0);
+  });
+
   it("credits a completed gateway top-up exactly once across duplicate callbacks", async () => {
     const user = await createUser();
     const { topup } = await creditStorage.createTopup({

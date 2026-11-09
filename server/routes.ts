@@ -2181,21 +2181,9 @@ export async function registerRoutes(
       if (!user || user.banned === 1) {
         return res.status(403).json({ error: "Account is not eligible for top-ups" });
       }
-      try {
-        const minimum = await nowPaymentsService.getMinimumPaymentAmount(
-          input.payCurrency.toLowerCase(),
-          "usd",
-        );
-        const minimumUsd = Math.ceil(minimum.minimumFiatAmount * 100) / 100;
-        if (input.amountCents < Math.ceil(minimumUsd * 100)) {
-          return res.status(400).json({
-            error: `Minimum top-up for ${input.payCurrency.toUpperCase()} is $${minimumUsd.toFixed(2)}.`,
-            minimumUsd,
-          });
-        }
-      } catch (minimumError) {
-        console.warn("Could not preflight top-up minimum:", minimumError);
-      }
+      // Keep the shop's $1 floor above, but let payment creation enforce the
+      // merchant's actual provider minimum. Same-coin estimates may describe
+      // a different payout pair than this merchant uses.
       const creation = await creditStorage.createTopup({
         userId: user.id,
         userEmail: user.email,
@@ -2488,21 +2476,9 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Payment gateway not configured" });
       }
 
-      try {
-        const minimum = await nowPaymentsService.getMinimumPaymentAmount(
-          currency.toLowerCase(),
-          "usd",
-        );
-        const minimumUsd = Math.ceil(minimum.minimumFiatAmount * 100) / 100;
-        if (authoritativeAmount < minimumUsd) {
-          return res.status(400).json({
-            error: `The order total is below the $${minimumUsd.toFixed(2)} minimum for ${currency.toUpperCase()}. Choose another cryptocurrency.`,
-            minimumUsd,
-          });
-        }
-      } catch (minimumError) {
-        console.warn("Could not preflight checkout minimum:", minimumError);
-      }
+      // Product orders may cost as little as one cent. NOWPayments creation
+      // enforces the actual network/payout minimum; an indicative same-coin
+      // minimum must not reject an otherwise valid payment in advance.
 
       const checkoutEmail = auth ? auth.session.email : email;
 

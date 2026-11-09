@@ -15,11 +15,11 @@ Every monetary operation must have a stable idempotency key plus an operation fi
 
 **How to apply:** For new credit operations, lock the affected user/order rows in the established order, mutate balances and ledger entries in one transaction, reject changed payloads for reused keys, and keep bounded reconciliation running for completed external payments that can later be refunded. On clients, scope each key to the current payload so changing an amount or currency starts a new operation while retrying the same payload reuses its key.
 
-NOWPayments minimums must be fetched dynamically for the same source/target crypto pair with a fiat equivalent. Its live response returns the fiat amount in `fiat_equivalent` (numeric), despite documentation and older clients suggesting a separate `fiat_equivalent_amount` field.
+Product purchases must support cent-priced items independently of the $1 account top-up floor. Same-coin NOWPayments minimum estimates are informational, not grounds for blocking a checkout or automatically switching a customer's chosen network.
 
-**Why:** Hardcoded USD thresholds become stale, and assuming the wrong response field silently makes every currency minimum unknown.
+**Why:** The user asked for cent-priced products while retaining the $1 top-up floor. The actual provider minimum depends on merchant payout configuration; a same-coin estimate can describe a different route and reject payments that creation would accept. Automatically changing a network also undermines an explicit customer choice.
 
-**How to apply:** Cache live minimums briefly, treat unknown currencies as available rather than guessing, enforce known minimums again on the server before creating an order/top-up, and disable known-ineligible choices in the UI.
+**How to apply:** Keep estimates optional and clearly labeled, preserve the selected currency/network, and let NOWPayments payment creation enforce its actual limit. Display provider rejections honestly rather than claiming all cent-sized crypto payments are possible. The API's fiat amount may be in numeric `fiat_equivalent`, not `fiat_equivalent_amount`.
 
 External credit notifications use a transactional outbox with canonical provider statuses and at-least-once delivery; they must never share completion state with email or financial mutations.
 
