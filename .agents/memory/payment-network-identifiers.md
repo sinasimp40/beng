@@ -8,3 +8,9 @@ Check NOWPayments' current currency list and the merchant's enabled coins before
 **Why:** The older OpenAPI example list included plain USDT and legacy BNB identifiers, but the current live currency list omitted them and exposed network-specific replacements. Using outdated examples can make only those coins fail while other coins work.
 
 **How to apply:** Use the exact provider identifier through currency selection, minimum-amount requests, payment creation, and reconciliation. Never silently choose a network for a customer who selected only a generic stablecoin ticker; preserve the original network on existing payments.
+
+NOWPayments status lookup can temporarily return `404 NOT_FOUND` for a payment immediately after successful creation.
+
+**Why:** Live unpaid creation checks returned valid waiting payments, but their first status reads returned not found; later reads of those same payments succeeded with the expected currency and unpaid state.
+
+**How to apply:** Do not interpret the first not-found response as payment failure or recreate the invoice automatically. Keep bounded polling and distinguish temporary lookup failure from a terminal provider payment status.
