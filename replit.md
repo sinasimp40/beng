@@ -8,9 +8,12 @@ This is a digital e-commerce platform for selling gift cards, rewards points, an
 
 - Use the **Start application** workflow, which runs `npm run dev`.
 - The Express and Vite application listens on `0.0.0.0:5000`.
+- Install dependencies with `npm install`, then run `npm run db:push` before the first startup.
+- The Replit-managed PostgreSQL database supplies `DATABASE_URL`; keep `SESSION_SECRET` in Secrets.
 - Apply development database schema changes with `npm run db:push`.
-- Validate the project with `npm run check` and `npm run build`.
+- Validate the project with `npm run check`, `npm test`, and `npm run build`.
 - Payment gateway, SMTP, reCAPTCHA, and Telegram settings are optional for local startup and can be configured through the admin panel.
+- A fresh database has no products or users. Registration creates a regular user, not an administrator; admin access must be provisioned deliberately before configuring the shop. No default administrator credentials are created.
 
 ## User Preferences
 
@@ -48,7 +51,7 @@ Preferred communication style: Simple, everyday language.
 ### Data Storage
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Location**: `shared/schema.ts` contains all database table definitions
-- **Current Storage**: In-memory storage implementation (`MemStorage`) with interface designed for database migration
+- **Current Storage**: PostgreSQL-backed storage using Drizzle ORM
 - **Database Config**: Drizzle Kit configured for PostgreSQL with migrations output to `./migrations`
 
 ### Payment Integration
