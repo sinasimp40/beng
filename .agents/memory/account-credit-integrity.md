@@ -3,6 +3,12 @@ name: Account-credit integrity
 description: Durable consistency rules for balance mutations and asynchronous crypto top-ups.
 ---
 
+Keep the shop's $1 minimum for account-credit top-ups, independently of any higher NOWPayments minimum.
+
+**Why:** The user explicitly chose to keep the $1 minimum rather than allow cent-sized top-ups.
+
+**How to apply:** Preserve the $1 floor when changing top-up validation or payment-provider checks; this is not a $1 minimum for product purchases.
+
 Every monetary operation must have a stable idempotency key plus an operation fingerprint, and retries sharing a key must be serialized before checking the ledger. Account and order deletion must acquire the same ownership locks as balance mutations and preserve any account or order with financial history or pending obligations.
 
 **Why:** Request retries, callback reordering, missed provider callbacks, and concurrent admin actions can otherwise duplicate funds, orphan paid top-ups, or separate audit records from their owners.
