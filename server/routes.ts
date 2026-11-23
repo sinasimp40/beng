@@ -14,7 +14,7 @@ import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptTok
 import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
-import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerDescription, providerProductName, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
+import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
 import type { Order } from "@shared/schema";
 import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, recordSuccessfulLogin } from "./security";
 
@@ -549,6 +549,7 @@ async function applyOrderGatewayStatus(order: Order, gatewayStatus: string): Pro
 
 // Background polling interval for pending orders (auto-update from NOWPayments)
 let orderPollingInterval: NodeJS.Timeout | null = null;
+let miraiSyncInterval: NodeJS.Timeout | null = null;
 
 async function pollPendingOrders() {
   try {
@@ -617,10 +618,6 @@ async function getMiraiUsdRate() {
   return Number.isFinite(configured) && configured >= 1000 && configured <= 100000 ? configured : 26000;
 }
 
-function miraiDefaultPrice(pkg: import("./mirai").MiraiPackage, vndPerUsd: number) {
-  const vnd = Number(pkg.retail_price_vnd || pkg.reseller_price_vnd || 0);
-  return Math.max(0.01, Math.round((vnd / vndPerUsd) * 100) / 100);
-}
 
 async function syncMiraiProducts() {
   const [packages, balance, vndPerUsd] = await Promise.all([getMiraiPackages(), getMiraiBalance(), getMiraiUsdRate()]);
@@ -630,8 +627,14 @@ async function syncMiraiProducts() {
   for (const pkg of packages) {
     const current = existingByCode.get(pkg.code);
     const stock = providerStock(balance.balance_vnd, pkg.reseller_price_vnd);
+    const legacyDescription = `${pkg.name}${pkg.models?.length ? `\n\nModels: ${pkg.models.join(", ")}` : ""}`;
+    const localizedCategory = providerCategory(pkg.group);
     const product = current
       ? await storage.updateProduct(current.id, {
+          ...(current.name === pkg.name ? { name: providerProductName(pkg) } : {}),
+          ...(current.description === legacyDescription ? { description: providerDescription(pkg) } : {}),
+          ...(current.price === 0.01 ? { price: providerDefaultPrice(pkg, vndPerUsd) } : {}),
+          ...(current.category === pkg.group || current.category === "Mirai" ? { category: localizedCategory } : {}),
           stock,
           fulfillmentProvider: "mirai",
           providerPackageCode: pkg.code,
@@ -640,8 +643,8 @@ async function syncMiraiProducts() {
       : await storage.createProduct({
           name: providerProductName(pkg),
           description: providerDescription(pkg),
-          price: miraiDefaultPrice(pkg, vndPerUsd),
-          category: pkg.group || "Mirai",
+          price: providerDefaultPrice(pkg, vndPerUsd),
+          category: localizedCategory,
           stock,
           imageUrl: null,
           countries: [],
@@ -660,18 +663,26 @@ async function syncMiraiProducts() {
   }
   for (const product of existing.filter(item => item.fulfillmentProvider === "mirai" && !packages.some(pkg => pkg.code === item.providerPackageCode))) {
     const disabled = await storage.updateProduct(product.id, { stock: 0, providerAvailable: 0 });
-    if (disabled) imported.push(disabled);
+    if (disabled) { imported.push(disabled); broadcastProductUpdate("product_updated", disabled); }
   }
   return { balance, products: imported, vndPerUsd };
 }
 
+function parseMiraiActivity(raw?: string) {
+  try {
+    const entries = JSON.parse(raw || "[]");
+    return Array.isArray(entries) ? entries.slice(0, 200) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function addMiraiActivity(action: "redeem_new" | "redeem_renew", code: string, apiKey?: string) {
-  const previous = JSON.parse((await storage.getSetting("mirai_activity_log")) || "[]") as unknown[];
+  const previous = parseMiraiActivity(await storage.getSetting("mirai_activity_log"));
   const mask = (value: string) => value.length > 10 ? `${value.slice(0, 5)}****${value.slice(-4)}` : "****";
   previous.unshift({ id: crypto.randomUUID(), action, code: mask(code), apiKey: apiKey ? mask(apiKey) : undefined, createdAt: new Date().toISOString() });
   await storage.setSetting("mirai_activity_log", JSON.stringify(previous.slice(0, 200)));
 }
-
 // Start background order polling (every 30 seconds)
 function startOrderPolling() {
   if (orderPollingInterval) {
@@ -679,13 +690,26 @@ function startOrderPolling() {
   }
   orderPollingInterval = setInterval(pollPendingOrders, 30000);
   orderPollingInterval.unref();
-  console.log("Started automatic order status polling (every 30 seconds)");
+  if (miraiSyncInterval) clearInterval(miraiSyncInterval);
+  miraiSyncInterval = setInterval(async () => {
+    try {
+      if (await miraiConfigured()) await syncMiraiProducts();
+    } catch (error: any) {
+      console.error("Automatic Mirai catalog refresh failed:", error?.message || "provider unavailable");
+    }
+  }, 5 * 60 * 1000);
+  miraiSyncInterval.unref();
+  console.log("Started automatic order polling and Mirai catalog refresh");
 }
 
 export function stopOrderPolling() {
   if (orderPollingInterval) {
     clearInterval(orderPollingInterval);
     orderPollingInterval = null;
+  }
+  if (miraiSyncInterval) {
+    clearInterval(miraiSyncInterval);
+    miraiSyncInterval = null;
   }
 }
 
@@ -2023,7 +2047,7 @@ export async function registerRoutes(
       const configured = await miraiConfigured();
       if (!configured) return res.json({ configured: false });
       const [balance, vndPerUsd, activity] = await Promise.all([getMiraiBalance(), getMiraiUsdRate(), storage.getSetting("mirai_activity_log")]);
-      res.json({ configured: true, balance, vndPerUsd, activity: JSON.parse(activity || "[]") });
+      res.json({ configured: true, balance, vndPerUsd, activity: parseMiraiActivity(activity) });
     } catch (error: any) {
       res.status(502).json({ configured: true, error: error.message || "Mirai connection failed" });
     }
@@ -2068,7 +2092,7 @@ export async function registerRoutes(
       const [packages, storeProducts] = await Promise.all([getMiraiPackages(), storage.getAllProducts()]);
       res.json(packages.map(pkg => {
         const product = storeProducts.find(item => item.providerPackageCode === pkg.code);
-        return { code: pkg.code, group: product?.category || pkg.group || "AI Access", name: product?.name || pkg.name, quotaTokens: pkg.quota_tokens, durationSeconds: pkg.duration_seconds, models: pkg.models || [], priceUsd: product?.price, available: Boolean(product?.enabled === 1 && product?.providerAvailable !== 0) };
+        return { code: pkg.code, group: product?.category || providerCategory(pkg.group), name: product?.name || providerProductName(pkg), quotaTokens: pkg.quota_tokens, durationSeconds: pkg.duration_seconds, models: pkg.models || [], priceUsd: product?.price, available: Boolean(product?.enabled === 1 && product?.providerAvailable !== 0) };
       }));
     } catch {
       res.status(503).json({ error: "Access catalog is temporarily unavailable" });
@@ -2079,7 +2103,7 @@ export async function registerRoutes(
     try {
       const code = z.string().trim().min(6).max(200).parse(req.body.code);
       const result = await redeemAccessCode(code);
-      await addMiraiActivity("redeem_new", code, result.api_key);
+      try { await addMiraiActivity("redeem_new", code, result.api_key); } catch { console.error("Redeem succeeded; activity log could not be updated."); }
       res.json(result);
     } catch (error) {
       res.status(error instanceof z.ZodError ? 400 : 502).json({ error: error instanceof z.ZodError ? "Enter a valid access code" : "This access code could not be redeemed" });
@@ -2099,7 +2123,7 @@ export async function registerRoutes(
     try {
       const input = z.object({ code: z.string().trim().min(6).max(200), apiKey: z.string().trim().min(6).max(300) }).parse(req.body);
       const result = await renewAccessCode(input.code, input.apiKey);
-      await addMiraiActivity("redeem_renew", input.code, input.apiKey);
+      try { await addMiraiActivity("redeem_renew", input.code, input.apiKey); } catch { console.error("Renewal succeeded; activity log could not be updated."); }
       res.json(result);
     } catch (error) {
       res.status(error instanceof z.ZodError ? 400 : 502).json({ error: error instanceof z.ZodError ? "Enter both the access code and API key" : "This access key could not be renewed" });

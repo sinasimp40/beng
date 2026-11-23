@@ -172,11 +172,33 @@ export function newProviderIdempotencyKey() {
 }
 
 const translations: Record<string, string> = {
-  "Trung Quốc": "Chinese", "Không giới hạn": "Unlimited", "tháng": "month", "ngày": "days", "Gói": "Package",
+  "\u0054\u0072\u0075\u006e\u0067 \u0051\u0075\u1ed1\u0063": "Chinese",
+  "\u004b\u0068\u00f4\u006e\u0067 \u0067\u0069\u1edb\u0069 \u0068\u1ea1\u006e": "Unlimited",
+  "\u0074\u0068\u00e1\u006e\u0067": "month",
+  "\u006e\u0067\u00e0\u0079": "days",
+  "\u0047\u00f3\u0069": "Package",
 };
 
-export function providerProductName(pkg: MiraiPackage) {
-  return Object.entries(translations).reduce((name, [from, to]) => name.replaceAll(from, to), pkg.name).replace(/\s+/g, " ").trim();
+export function translateMiraiLabel(value?: string) {
+  if (!value) return "";
+  let translated = value;
+  for (const [from, to] of Object.entries(translations)) translated = translated.replaceAll(from, to);
+  return translated.replace(/\s+/g, " ").trim();
+}
+
+export function providerProductName(pkg: { name: string }) {
+  return translateMiraiLabel(pkg.name);
+}
+
+export function providerCategory(group?: string) {
+  const label = translateMiraiLabel(group);
+  return label && label.toLowerCase() !== "mirai" ? label : "AI Access";
+}
+
+export function providerDefaultPrice(pkg: MiraiPackage, vndPerUsd: number) {
+  const vnd = Number(pkg.reseller_price_vnd || pkg.retail_price_vnd || 0);
+  if (!Number.isFinite(vnd) || vnd <= 0 || !Number.isFinite(vndPerUsd) || vndPerUsd <= 0) return 0.01;
+  return Math.max(0.01, Math.round((vnd / vndPerUsd) * 100) / 100);
 }
 
 export function providerDescription(pkg: MiraiPackage) {
