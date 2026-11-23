@@ -14,6 +14,7 @@ import Dashboard from "@/pages/dashboard";
 import ResetPassword from "@/pages/reset-password";
 import Reviews from "@/pages/reviews";
 import StatusPage from "@/pages/status";
+import RedeemCodePage from "@/pages/redeem-code";
 
 function Router() {
   return (
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/reviews" component={Reviews} />
       <Route path="/status" component={StatusPage} />
+      <Route path="/redeem-code" component={RedeemCodePage} />
       <Route component={NotFound} />
     </Switch>
   );

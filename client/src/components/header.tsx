@@ -8,7 +8,7 @@ import { CartDrawer } from "@/components/cart-drawer";
 import type { CartItem } from "@/lib/cart";
 import { useAuth } from "@/lib/auth";
 import { useShopSettings } from "@/hooks/use-shop-settings";
-import { Store, Settings, LogIn, UserPlus, User, LogOut, Sparkles, MessageSquareQuote, Activity } from "lucide-react";
+import { Store, Settings, LogIn, UserPlus, User, LogOut, Sparkles, MessageSquareQuote, Activity, KeyRound } from "lucide-react";
 
 interface HeaderProps {
   searchQuery: string;
@@ -106,6 +106,16 @@ export function Header({
                 >
                   <Activity className="w-4 h-4 shrink-0" />
                   <span className="hidden sm:inline">Status</span>
+                </Button>
+              </Link>
+              <Link href="/redeem-code">
+                <Button
+                  variant="ghost"
+                  className="h-9 w-9 p-0 sm:w-auto sm:px-3 sm:py-2 gap-2 text-white/70 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/10"
+                  data-testid="link-redeem-code"
+                >
+                  <KeyRound className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">Redeem Code</span>
                 </Button>
               </Link>
               

@@ -4,6 +4,8 @@ import { storage } from "./storage";
 import type { Product } from "@shared/schema";
 
 const MIRAI_BASE_URL = "https://api.miraiapi.com/api/reseller/v1";
+const MIRAI_PUBLIC_API_URL = "https://api.miraiapi.com/api";
+const MIRAI_OPENAI_URL = "https://api.miraiapi.com/v1";
 const KEY_SETTING = "mirai_reseller_api_key";
 
 export interface MiraiPackage {
@@ -12,6 +14,7 @@ export interface MiraiPackage {
   name: string;
   quota_tokens?: number;
   duration_seconds?: number;
+  retail_price_vnd?: number;
   reseller_price_vnd: number;
   models?: string[];
   remaining_today?: number;
@@ -48,6 +51,44 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (body.data === undefined) throw new Error("Mirai API returned no data");
   return body.data;
+}
+
+async function publicRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${MIRAI_PUBLIC_API_URL}${path}`, {
+    ...init,
+    headers: { Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}), ...(init.headers || {}) },
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await response.json().catch(() => ({})) as { success?: boolean; data?: T; message?: string; error?: string };
+  if (!response.ok || body.success === false) throw new MiraiRequestError(body.message || body.error || `Access request failed (${response.status})`, response.status);
+  return (body.data === undefined ? body : body.data) as T;
+}
+
+export async function redeemAccessCode(code: string) {
+  return publicRequest<{ api_key: string; quota_tokens?: number; expires_at?: string; recovered?: boolean }>("/redeem/new", {
+    method: "POST", body: JSON.stringify({ redeem_code: code }),
+  });
+}
+
+export async function renewAccessCode(code: string, apiKey: string) {
+  return publicRequest<{ api_key?: string; quota_before?: number; quota_after?: number; expires_at?: string }>("/redeem/renew", {
+    method: "POST", body: JSON.stringify({ redeem_code: code, api_key: apiKey }),
+  });
+}
+
+export async function checkAccessKey(apiKey: string) {
+  return publicRequest<{ quota_total?: number; quota_remaining?: number; requests_24h?: number; error_rate_24h?: number; success_rate_24h?: number; expires_at?: string }>("/usage/check", {
+    method: "POST", body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+export async function forwardAccessApi(path: string, init: RequestInit = {}) {
+  const response = await fetch(`${MIRAI_OPENAI_URL}${path}`, {
+    ...init,
+    headers: { Accept: "application/json", ...(init.headers || {}) },
+    signal: AbortSignal.timeout(60000),
+  });
+  return response;
 }
 
 export async function getMiraiBalance() {
