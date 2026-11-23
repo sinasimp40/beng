@@ -14,7 +14,7 @@ import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptTok
 import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
-import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, providerDescription, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
+import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, providerDescription, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
 import type { Order } from "@shared/schema";
 import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, recordSuccessfulLogin } from "./security";
 
@@ -2026,9 +2026,9 @@ export async function registerRoutes(
   app.get("/api/access/catalog", async (_req, res) => {
     try {
       const [packages, storeProducts] = await Promise.all([getMiraiPackages(), storage.getAllProducts()]);
-      res.json(packages.filter(pkg => storeProducts.some(product => product.providerPackageCode === pkg.code && product.enabled === 1)).map(pkg => {
-        const product = storeProducts.find(item => item.providerPackageCode === pkg.code)!;
-        return { code: pkg.code, group: product.category || "AI Access", name: product.name, quotaTokens: pkg.quota_tokens, durationSeconds: pkg.duration_seconds, models: pkg.models || [], priceUsd: product.price };
+      res.json(packages.map(pkg => {
+        const product = storeProducts.find(item => item.providerPackageCode === pkg.code);
+        return { code: pkg.code, group: product?.category || pkg.group || "AI Access", name: product?.name || pkg.name, quotaTokens: pkg.quota_tokens, durationSeconds: pkg.duration_seconds, models: pkg.models || [], priceUsd: product?.price, available: Boolean(product?.enabled === 1 && product?.providerAvailable !== 0) };
       }));
     } catch {
       res.status(503).json({ error: "Access catalog is temporarily unavailable" });
@@ -2041,6 +2041,15 @@ export async function registerRoutes(
       res.json(await redeemAccessCode(code));
     } catch (error) {
       res.status(error instanceof z.ZodError ? 400 : 502).json({ error: error instanceof z.ZodError ? "Enter a valid access code" : "This access code could not be redeemed" });
+    }
+  });
+
+  app.post("/api/access/preview", async (req, res) => {
+    try {
+      const code = z.string().trim().min(6).max(200).parse(req.body.code);
+      res.json(await previewAccessCode(code));
+    } catch (error) {
+      res.status(error instanceof z.ZodError ? 400 : 502).json({ error: error instanceof z.ZodError ? "Enter a valid access code" : "This access code could not be checked" });
     }
   });
 
@@ -2063,20 +2072,46 @@ export async function registerRoutes(
   });
 
   app.all("/api/access/v1/*", async (req, res) => {
+    const controller = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) controller.abort();
+    });
     try {
       const upstreamPath = req.originalUrl.replace(/^\/api\/access\/v1/, "") || "/";
       const headers: Record<string, string> = {};
       if (typeof req.headers.authorization === "string") headers.Authorization = req.headers.authorization;
       if (typeof req.headers["content-type"] === "string") headers["Content-Type"] = req.headers["content-type"];
-      const upstream = await forwardAccessApi(upstreamPath, { method: req.method, headers, body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body || {}) });
-      const contentType = upstream.headers.get("content-type");
-      if (contentType) res.setHeader("Content-Type", contentType);
-      res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+      const hasBody = !["GET", "HEAD"].includes(req.method) && req.body !== undefined;
+      const upstream = await forwardAccessApi(upstreamPath, {
+        method: req.method,
+        headers,
+        body: hasBody ? JSON.stringify(req.body) : undefined,
+        signal: controller.signal,
+      });
+      for (const header of ["content-type", "cache-control", "retry-after"]) {
+        const value = upstream.headers.get(header);
+        if (value) res.setHeader(header, value);
+      }
+      res.status(upstream.status);
+      if (!upstream.body) return res.end();
+      const reader = upstream.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!res.write(Buffer.from(value))) {
+            await new Promise<void>(resolve => res.once("drain", resolve));
+          }
+        }
+        res.end();
+      } finally {
+        reader.releaseLock();
+      }
     } catch {
-      res.status(502).json({ error: "Access service is temporarily unavailable" });
+      if (!res.headersSent) res.status(502).json({ error: "Access service is temporarily unavailable" });
+      else res.end();
     }
   });
-
   // Theme settings endpoints (GET is public for visitors to see theme, POST is admin-only)
   app.get("/api/settings/theme", async (req, res) => {
     try {

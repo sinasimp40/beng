@@ -70,6 +70,10 @@ export async function redeemAccessCode(code: string) {
   });
 }
 
+export async function previewAccessCode(code: string) {
+  return publicRequest<{ code_prefix?: string; status?: string; package_code?: string; package_name?: string; quota_tokens?: number; duration_seconds?: number; expires_at?: string }>(`/redeem/preview?code=${encodeURIComponent(code)}`);
+}
+
 export async function renewAccessCode(code: string, apiKey: string) {
   return publicRequest<{ api_key?: string; quota_before?: number; quota_after?: number; expires_at?: string }>("/redeem/renew", {
     method: "POST", body: JSON.stringify({ redeem_code: code, api_key: apiKey }),
@@ -77,7 +81,7 @@ export async function renewAccessCode(code: string, apiKey: string) {
 }
 
 export async function checkAccessKey(apiKey: string) {
-  return publicRequest<{ quota_total?: number; quota_remaining?: number; requests_24h?: number; error_rate_24h?: number; success_rate_24h?: number; expires_at?: string }>("/usage/check", {
+  return publicRequest<Record<string, unknown>>("/usage/check", {
     method: "POST", body: JSON.stringify({ api_key: apiKey }),
   });
 }
@@ -85,8 +89,12 @@ export async function checkAccessKey(apiKey: string) {
 export async function forwardAccessApi(path: string, init: RequestInit = {}) {
   const response = await fetch(`${MIRAI_OPENAI_URL}${path}`, {
     ...init,
-    headers: { Accept: "application/json", ...(init.headers || {}) },
-    signal: AbortSignal.timeout(60000),
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Store-Access-Proxy/1.0",
+      ...(init.headers || {}),
+    },
+    signal: init.signal || AbortSignal.timeout(60000),
   });
   return response;
 }
