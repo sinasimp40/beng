@@ -27,10 +27,12 @@ export function MiraiSettings() {
 
   const save = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/mirai", { apiKey }),
-    onSuccess: (result: MiraiStatus) => {
+    onSuccess: async (response) => {
+      const result = await response.json() as MiraiStatus;
       setApiKey("");
       queryClient.invalidateQueries({ queryKey: ["/api/admin/mirai"] });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/products?admin=true"] });
       toast({ title: "Mirai catalog synchronized", description: `${result.products?.length || 0} product(s) are ready for your pricing and content edits.` });
     },
     onError: (error: Error) => toast({ title: "Mirai setup failed", description: error.message, variant: "destructive" }),
@@ -38,9 +40,10 @@ export function MiraiSettings() {
 
   const sync = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/mirai/sync"),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/mirai"] });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/products?admin=true"] });
       toast({ title: "Mirai catalog updated", description: "Availability was refreshed without changing your product content or prices." });
     },
     onError: (error: Error) => toast({ title: "Sync failed", description: error.message, variant: "destructive" }),
