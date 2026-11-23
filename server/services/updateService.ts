@@ -352,16 +352,25 @@ export async function applyUpdate(
     if (isProduction) {
       await emitRange(79, 84, "rebuilding", "Building production bundle...");
       try {
-        execSync("npx tsx script/build.ts", {
+        execSync("npm run build", {
           cwd: baseDir,
           timeout: 180000,
           stdio: "pipe",
           env: execEnv,
-          shell: "/bin/sh",
+
         });
       } catch (buildErr: any) {
-        const errMsg = buildErr.stderr?.toString() || buildErr.message || "Unknown build error";
-        console.error("[Update] npm run build failed, restoring backup...");
+        const stdout = buildErr.stdout?.toString() || "";
+        const stderr = buildErr.stderr?.toString() || "";
+        const combined = `${stdout}\n${stderr}`;
+        const errorLines = combined
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(line => /\berror\b|failed|failure|cannot find|could not resolve|not found/i.test(line) && !/warnings?|non-blocking/i.test(line));
+        const errMsg = errorLines[errorLines.length - 1]
+          || buildErr.message
+          || "Unknown build error";
+        console.error("[Update] npm run build failed, restoring backup...\n", combined);
 
         const currentTracked = getLocalTrackedFiles(baseDir);
         const backedUpSet = new Set(backedUpFiles);
@@ -391,7 +400,7 @@ export async function applyUpdate(
         try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch {}
         try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch {}
 
-        await emit({ jobId, type: "error", progress: 84, message: `Build failed — files restored to previous version. ${errMsg.substring(0, 200)}` });
+        await emit({ jobId, type: "error", progress: 84, message: "Build failed — files restored to previous version.", details: errMsg.substring(0, 500) });
         return { success: false, filesUpdated: 0, newCommit: latestCommit, error: errMsg };
       }
     }
