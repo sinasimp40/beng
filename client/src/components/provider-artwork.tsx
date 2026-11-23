@@ -37,7 +37,7 @@ export function ProviderMark({ id, large = false }: { id: string; large?: boolea
   const key = id.toLowerCase();
   const mark = marks[key] || (key.includes("claude") ? marks.claude : key.includes("codex") ? marks.codex : key.includes("open") ? marks.openai : key.includes("roo") ? marks.roo : key.includes("cline") ? marks.cline : key.includes("telegram") ? marks.telegram : marks.vietcode);
   const Icon = mark.Icon;
-  return <span aria-label={mark.name} title={mark.name} className={`grid shrink-0 place-items-center rounded-xl border border-border bg-gradient-to-br from-white/20 via-white/5 to-black/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.35),0_4px_0_-1px_rgba(0,0,0,0.12),0_8px_16px_-10px_currentColor] ${large ? "h-12 w-12" : "h-9 w-9"}`} style={{ color: mark.color }}><Icon className={large ? "h-6 w-6" : "h-4 w-4"} /></span>;
+  return <span aria-label={mark.name} title={mark.name} className={`grid shrink-0 place-items-center rounded-xl border border-border bg-gradient-to-br from-white/20 via-white/5 to-black/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.35),0_4px_0_-1px_rgba(0,0,0,0.12),0_8px_16px_-10px_currentColor] ${large ? "h-12 w-12" : "h-9 w-9"}`} style={{ color: mark.color, backgroundColor: `${mark.color}20` }}><Icon aria-hidden="true" className={`${large ? "h-7 w-7" : "h-5 w-5"} drop-shadow-sm`} /></span>;
 }
 
 export function ModelArtwork({ models, group }: { models: string[]; group?: string }) {
@@ -45,7 +45,7 @@ export function ModelArtwork({ models, group }: { models: string[]; group?: stri
   return <div className="flex shrink-0 flex-wrap items-center gap-1.5" aria-label={`AI providers: ${artwork.map(mark => mark.name).join(", ")}`}>
     {artwork.map(mark => {
       const Icon = mark.Icon;
-      return <span key={mark.name} title={mark.name} className="grid h-8 w-8 place-items-center rounded-lg border border-border bg-gradient-to-br from-white/20 to-black/5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.3),0_3px_0_-1px_rgba(0,0,0,0.12)]" style={{ color: mark.color }}><Icon className="h-4 w-4" /></span>;
+      return <span key={mark.name} title={mark.name} className="grid h-8 w-8 place-items-center rounded-lg border border-border bg-gradient-to-br from-white/20 to-black/5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.3),0_3px_0_-1px_rgba(0,0,0,0.12)]" style={{ color: mark.color, backgroundColor: `${mark.color}20` }}><Icon aria-hidden="true" className="h-5 w-5 drop-shadow-sm" /></span>;
     })}
   </div>;
 }
