@@ -354,10 +354,10 @@ export async function applyUpdate(
       try {
         execSync("npm run build", {
           cwd: baseDir,
-          timeout: 180000,
+          timeout: 300000,
+          maxBuffer: 10 * 1024 * 1024,
           stdio: "pipe",
           env: execEnv,
-
         });
       } catch (buildErr: any) {
         const stdout = buildErr.stdout?.toString() || "";
@@ -366,8 +366,15 @@ export async function applyUpdate(
         const errorLines = combined
           .split(/\r?\n/)
           .map(line => line.trim())
-          .filter(line => /\berror\b|failed|failure|cannot find|could not resolve|not found/i.test(line) && !/warnings?|non-blocking/i.test(line));
+          .filter(line => /\berror\b|failed|failure|cannot find|could not resolve|not found/i.test(line) && !/warning|warn:|warnings?/i.test(line));
+        const outputTail = combined
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(Boolean)
+          .slice(-8)
+          .join(" | ");
         const errMsg = errorLines[errorLines.length - 1]
+          || outputTail
           || buildErr.message
           || "Unknown build error";
         console.error("[Update] npm run build failed, restoring backup...\n", combined);
