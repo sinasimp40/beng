@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Package, DollarSign, BarChart3, Settings, ShoppingBag, ClipboardList, CheckCircle2, Clock, Mail, TrendingUp, Calendar, CalendarDays, Users, Database, Loader2, MessageCircle, Download } from "lucide-react";
+import { Plus, Package, DollarSign, BarChart3, Settings, ShoppingBag, ClipboardList, CheckCircle2, Clock, Mail, TrendingUp, Calendar, CalendarDays, Users, Database, Loader2, MessageCircle, Download, Bot } from "lucide-react";
 import { UsersTable } from "@/components/admin/users-table";
 import { CreditLogs } from "@/components/admin/credit-logs";
 import { useCreditUpdates } from "@/hooks/use-credit-updates";
@@ -43,6 +43,7 @@ const adminTabs = [
   { value: "credits", label: "Credit logs", icon: DollarSign },
   { value: "reviews", label: "Reviews", icon: Star },
   { value: "settings", label: "Settings", icon: Settings },
+  { value: "mirai", label: "Mirai", icon: Bot },
   { value: "theme", label: "Theme", icon: Palette },
   { value: "social", label: "Social", icon: MessageCircle },
   { value: "database", label: "Database", icon: Database },
@@ -730,12 +731,15 @@ export default function Admin() {
               <div className="space-y-6">
                 <ShopSettings />
                 <PaymentSettings />
-                <MiraiSettings />
                 <SmtpSettings />
                 <RecaptchaSettings />
                 <EmailTemplateEditor />
                 <ForgotPasswordTemplateEditor />
               </div>
+            </TabsContent>
+
+            <TabsContent value="mirai">
+              <MiraiSettings />
             </TabsContent>
 
             <TabsContent value="email">

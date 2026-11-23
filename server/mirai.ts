@@ -171,9 +171,20 @@ export function newProviderIdempotencyKey() {
   return `store-${randomUUID()}`;
 }
 
+const translations: Record<string, string> = {
+  "Trung Quốc": "Chinese", "Không giới hạn": "Unlimited", "tháng": "month", "ngày": "days", "Gói": "Package",
+};
+
+export function providerProductName(pkg: MiraiPackage) {
+  return Object.entries(translations).reduce((name, [from, to]) => name.replaceAll(from, to), pkg.name).replace(/\s+/g, " ").trim();
+}
+
 export function providerDescription(pkg: MiraiPackage) {
-  const models = pkg.models?.length ? `\n\nModels: ${pkg.models.join(", ")}` : "";
-  return `${pkg.name}${models}`;
+  const quota = pkg.unlimited ? "Unlimited quota" : pkg.quota_tokens ? `${pkg.quota_tokens.toLocaleString()} tokens` : "Included API quota";
+  const days = pkg.duration_seconds ? Math.round(pkg.duration_seconds / 86400) : 0;
+  const duration = days ? `${days} day${days === 1 ? "" : "s"}` : "provider-defined duration";
+  const models = pkg.models?.length ? `\n\nIncluded models: ${pkg.models.join(", ")}.` : "";
+  return `${providerProductName(pkg)} provides ${quota} for ${duration}.${models}\n\nRedeem the delivered access code on the Developer Access page to create a new API key or add access to an existing key.`;
 }
 
 export function isMiraiProduct(product: Product) {
