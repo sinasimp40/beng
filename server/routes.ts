@@ -3407,6 +3407,9 @@ export async function registerRoutes(
       }
 
       const result = await importDatabase(jobId, importData, broadcastDatabaseProgress);
+      if (!result.success) {
+        return res.status(400).json({ error: result.message, details: result.details });
+      }
       
       // After import, reload settings into environment variables and services
       // This ensures NOWPayments, SMTP, Telegram settings are immediately active

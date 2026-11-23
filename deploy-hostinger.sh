@@ -134,12 +134,18 @@ DB_NAME="beng_db"
 DB_USER="beng_user"
 
 echo -e "${YELLOW}Setting up PostgreSQL database...${NC}"
-sudo -u postgres psql -c "DROP DATABASE IF EXISTS $DB_NAME;" 2>/dev/null || true
-sudo -u postgres psql -c "DROP USER IF EXISTS $DB_USER;" 2>/dev/null || true
-sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
-sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+else
+    echo "Database user already exists; preserving its data and updating the app password."
+    sudo -u postgres psql -c "ALTER ROLE $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+fi
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+else
+    echo "Database already exists; preserving existing data."
+fi
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
-
 DATABASE_URL="postgresql://$DB_USER:$DB_PASSWORD@localhost:5432/$DB_NAME"
 echo -e "${GREEN}Database created successfully!${NC}"
 
@@ -205,7 +211,14 @@ npm install
 
 # Build the application
 echo "Building application for production..."
-npm run build 2>/dev/null || echo "No build script found, skipping..."
+if ! npm run build; then
+    echo -e "${RED}Application build failed. PM2 will not be started. Fix the build errors above and run again.${NC}"
+    exit 1
+fi
+if [[ ! -f "$APP_DIR/dist/index.cjs" ]]; then
+    echo -e "${RED}Build did not produce $APP_DIR/dist/index.cjs. PM2 will not be started.${NC}"
+    exit 1
+fi
 
 # Push database schema
 echo "Setting up database schema..."

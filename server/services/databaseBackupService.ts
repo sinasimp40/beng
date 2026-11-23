@@ -261,6 +261,7 @@ export async function importDatabase(
   onProgress: ProgressCallback
 ): Promise<{ success: boolean; message: string; details: Record<string, number> }> {
   const details: Record<string, number> = {};
+  let importErrors = 0;
   let lastEmittedPercent = -1;
 
   const emitProgress = (percent: number, message: string, tableName?: string, totalRows?: number, processedRows?: number) => {
@@ -296,26 +297,12 @@ export async function importDatabase(
     return { success: false, message: 'Invalid import file format', details };
   }
 
-  // Credit ledgers refer to stable user IDs. Refuse a merge that would attach
-  // an imported balance to one ID while leaving its ledger on another.
-  const importedCreditRows = [
-    ...(importData.tables.creditTransactions?.data || []),
-    ...(importData.tables.creditTopups?.data || []),
-    ...(importData.tables.orders?.data || []).filter((row: any) => row.userId),
-  ] as Array<{ userId?: string }>;
+  // Existing installs can have the same email with a different generated ID.
+  // Map backup user IDs to the current account IDs before importing references.
+  const userIdMap = new Map<string, string>();
   for (const importedUser of (importData.tables.users?.data || []) as Array<{ id: string; email: string }>) {
     const [existingUser] = await db.select().from(users).where(eq(users.email, importedUser.email));
-    const hasFinancialReferences = importedCreditRows.some(row => row.userId === importedUser.id);
-    if (existingUser && existingUser.id !== importedUser.id && hasFinancialReferences) {
-      const message = `Import stopped: account ${importedUser.email} conflicts with existing credit history`;
-      onProgress({
-        jobId,
-        phase: 'error',
-        percent: 0,
-        message,
-      });
-      return { success: false, message, details };
-    }
+    userIdMap.set(importedUser.id, existingUser?.id || importedUser.id);
   }
 
   // Log what we received for debugging
@@ -380,7 +367,9 @@ export async function importDatabase(
       const errors: string[] = [];
       
       for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
+        const rawRow = rows[i];
+        const row = { ...rawRow } as any;
+        if (row.userId && userIdMap.has(row.userId)) row.userId = userIdMap.get(row.userId);
         try {
           if (tableName === 'settings') {
             // Settings table has unique constraint on 'key' column
@@ -557,6 +546,7 @@ export async function importDatabase(
           const errorMsg = `Error in ${tableName} row ${i}: ${err?.message || err}`;
           console.error(errorMsg);
           errors.push(errorMsg);
+          importErrors++;
         }
         
         processedRows++;
@@ -591,7 +581,10 @@ export async function importDatabase(
 
   // Create detailed summary message
   const summaryParts = Object.entries(details).map(([table, count]) => `${table}: ${count}`);
-  const summaryMessage = `Import completed. ${summaryParts.join(', ')}`;
+  const summaryMessage = importErrors > 0
+    ? `Import completed with ${importErrors} row errors. ${summaryParts.join(', ')}`
+    : `Import completed. ${summaryParts.join(', ')}`;
+
 
   onProgress({
     jobId,
@@ -601,7 +594,7 @@ export async function importDatabase(
   });
 
   return { 
-    success: true, 
+    success: importErrors === 0,
     message: summaryMessage, 
     details 
   };

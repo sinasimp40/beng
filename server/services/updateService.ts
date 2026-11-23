@@ -144,7 +144,8 @@ const IGNORE_PATTERNS = [
   /^\.update_backup\//,
 ];
 
-const TRACKED_DIRS = ["client", "server", "shared"];
+const TRACKED_DIRS = ["client", "server", "shared", "script"];
+const TRACKED_ROOT_FILES = ["package.json", "vite.config.ts", "postcss.config.js", "tailwind.config.ts", "tsconfig.json", "drizzle.config.ts", "ecosystem.config.cjs"];
 
 function shouldIgnoreFile(filePath: string): boolean {
   return IGNORE_PATTERNS.some(pattern => pattern.test(filePath));
@@ -174,6 +175,10 @@ function getLocalTrackedFiles(baseDir: string): string[] {
     if (fs.existsSync(trackedPath)) {
       walk(trackedPath);
     }
+  }
+
+  for (const fileName of TRACKED_ROOT_FILES) {
+    if (fs.existsSync(path.join(baseDir, fileName))) results.push(fileName);
   }
 
   return results;
@@ -285,6 +290,9 @@ export async function applyUpdate(
 
     await emitRange(64, 66, "applying", "Preparing staged build...");
 
+    const originalPackageJson = fs.existsSync(path.join(baseDir, "package.json"))
+      ? fs.readFileSync(path.join(baseDir, "package.json"), "utf-8")
+      : null;
     const stagingPackageJson = path.join(stagingDir, "package.json");
     if (fs.existsSync(stagingPackageJson)) {
       fs.copyFileSync(stagingPackageJson, path.join(baseDir, "package.json"));
@@ -404,6 +412,9 @@ export async function applyUpdate(
           } catch {}
         }
 
+        if (originalPackageJson !== null) {
+          try { fs.writeFileSync(path.join(baseDir, "package.json"), originalPackageJson, "utf-8"); } catch {}
+        }
         try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch {}
         try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch {}
 

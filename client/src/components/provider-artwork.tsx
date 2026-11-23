@@ -1,5 +1,5 @@
 import type { IconType } from "react-icons";
-import { SiAnthropic, SiClaude, SiClaudecode, SiCline, SiDeepseek, SiGooglegemini, SiQwen, SiTelegram } from "react-icons/si";
+import { SiAnthropic, SiClaude, SiGooglegemini, SiTelegram } from "react-icons/si";
 import { Bot, Code2, Cpu, Sparkles } from "lucide-react";
 
 type Mark = { name: string; Icon: IconType; color: string };
@@ -7,17 +7,17 @@ type Mark = { name: string; Icon: IconType; color: string };
 const marks: Record<string, Mark> = {
   claude: { name: "Claude", Icon: SiClaude, color: "#D97757" },
   anthropic: { name: "Anthropic", Icon: SiAnthropic, color: "#D97757" },
-  "claude-code": { name: "Claude Code", Icon: SiClaudecode, color: "#D97757" },
+  "claude-code": { name: "Claude Code", Icon: SiClaude, color: "#D97757" },
   codex: { name: "Codex", Icon: Code2, color: "#64748B" },
   chatgpt: { name: "ChatGPT", Icon: Sparkles, color: "#10A37F" },
   gpt: { name: "GPT", Icon: Sparkles, color: "#10A37F" },
   openai: { name: "OpenAI", Icon: Sparkles, color: "#10A37F" },
   gemini: { name: "Gemini", Icon: SiGooglegemini, color: "#8B7CFF" },
-  deepseek: { name: "DeepSeek", Icon: SiDeepseek, color: "#4A91F2" },
-  qwen: { name: "Qwen", Icon: SiQwen, color: "#615CED" },
+  deepseek: { name: "DeepSeek", Icon: Cpu, color: "#4A91F2" },
+  qwen: { name: "Qwen", Icon: Sparkles, color: "#615CED" },
   kimi: { name: "Kimi", Icon: Bot, color: "#52A6FF" },
   telegram: { name: "Telegram", Icon: SiTelegram, color: "#2AABEE" },
-  cline: { name: "Cline", Icon: SiCline, color: "#8FBF3F" },
+  cline: { name: "Cline", Icon: Code2, color: "#8FBF3F" },
   roo: { name: "Roo Code", Icon: Code2, color: "#E2794A" },
   opencode: { name: "OpenCode", Icon: Code2, color: "#F26D4F" },
   hermes: { name: "Hermes", Icon: Cpu, color: "#E8B44D" },

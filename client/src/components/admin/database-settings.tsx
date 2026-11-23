@@ -158,20 +158,19 @@ export function DatabaseSettings() {
       setProgress({ jobId: "", phase: "importing", percent: 50, message: "Importing data..." });
       
       const response = await apiRequest("POST", "/api/database/import", importData);
+      const result = await response.json() as { success: boolean; message?: string; details?: Record<string, number>; error?: string };
+      if (!result.success) throw new Error(result.error || result.message || "Database import was incomplete");
       
       if (response) {
         queryClient.invalidateQueries();
-        setProgress({ jobId: "", phase: "completed", percent: 100, message: "Import completed successfully. Logging out..." });
+        setProgress({ jobId: "", phase: "completed", percent: 100, message: result.message || "Import completed successfully. Reloading..." });
         toast({
           title: "Success",
-          description: "Database imported successfully. You will be logged out.",
+          description: result.message || "Database imported successfully.",
         });
         
-        // After successful import, log out the user since session data has changed
-        setTimeout(async () => {
-          await logout();
-          setLocation("/");
-        }, 2000);
+        // Reload the app so all screens read the restored database data.
+        setTimeout(() => window.location.reload(), 1200);
       }
     } catch (error) {
       setProgress({ jobId: "", phase: "error", percent: 0, message: (error as Error).message });
