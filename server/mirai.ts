@@ -86,6 +86,11 @@ export async function checkAccessKey(apiKey: string) {
   });
 }
 
+export async function proxyPublicApi(path: string, init: RequestInit = {}) {
+  const response = await fetch(`${MIRAI_PUBLIC_API_URL}${path}`, init);
+  return response;
+}
+
 export async function forwardAccessApi(path: string, init: RequestInit = {}) {
   const response = await fetch(`${MIRAI_OPENAI_URL}${path}`, {
     ...init,

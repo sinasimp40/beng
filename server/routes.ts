@@ -14,9 +14,30 @@ import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptTok
 import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
-import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, providerDescription, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
+import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerDescription, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
 import type { Order } from "@shared/schema";
 import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, recordSuccessfulLogin } from "./security";
+
+const usageCookieNames = new Set<string>();
+
+function forwardUsageSessionCookie(upstream: globalThis.Response, res: import("express").Response) {
+  const cookies = typeof upstream.headers.getSetCookie === "function" ? upstream.headers.getSetCookie() : [upstream.headers.get("set-cookie")].filter((value): value is string => Boolean(value));
+  const localCookies = cookies.map(cookie => {
+    const name = cookie.slice(0, cookie.indexOf("=")).trim();
+    if (name) usageCookieNames.add(name);
+    let local = cookie.replace(/;\s*domain=[^;]*/ig, "").replace(/;\s*path=[^;]*/ig, "; Path=/api/access").replace(/;\s*samesite=[^;]*/ig, "; SameSite=Lax");
+    if (!/;\s*path=/i.test(local)) local += "; Path=/api/access";
+    if (!/;\s*samesite=/i.test(local)) local += "; SameSite=Lax";
+    return local;
+  });
+  if (localCookies.length) res.setHeader("Set-Cookie", localCookies);
+}
+
+function forwardedUsageCookie(cookieHeader?: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  const allowed = cookieHeader.split(";").map(part => part.trim()).filter(part => usageCookieNames.has(part.slice(0, part.indexOf("="))));
+  return allowed.length ? allowed.join("; ") : undefined;
+}
 
 function hslToHex(h: number, s: number, l: number): string {
   s /= 100;
@@ -2062,10 +2083,61 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/access/history", async (req, res) => {
+    try {
+      const input = z.object({ page: z.coerce.number().int().min(1).max(1000).optional(), pageSize: z.coerce.number().int().min(1).max(100).optional() }).parse(req.body);
+      const cookie = forwardedUsageCookie(req.headers.cookie);
+      const upstream = await proxyPublicApi("/usage/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", ...(cookie ? { Cookie: cookie } : {}) },
+        body: JSON.stringify({ page: input.page || 1, page_size: input.pageSize || 50 }),
+      });
+      forwardUsageSessionCookie(upstream, res);
+      const text = await upstream.text();
+      const body = JSON.parse(text || "{}");
+      if (!upstream.ok || body.success === false) return res.status(upstream.status).json({ error: body.message || "Request history is unavailable" });
+      res.json(body.data ?? body);
+    } catch {
+      res.status(502).json({ error: "Request history is temporarily unavailable" });
+    }
+  });
+
+  app.post("/api/access/refresh", async (req, res) => {
+    try {
+      const cookie = forwardedUsageCookie(req.headers.cookie);
+      const upstream = await proxyPublicApi("/usage/refresh", {
+        method: "POST",
+        headers: { Accept: "application/json", ...(cookie ? { Cookie: cookie } : {}) },
+      });
+      forwardUsageSessionCookie(upstream, res);
+      const text = await upstream.text();
+      const body = JSON.parse(text || "{}");
+      if (!upstream.ok || body.success === false) return res.status(upstream.status).json({ error: body.message || "API key status is unavailable" });
+      res.json(body.data ?? body);
+    } catch {
+      res.status(502).json({ error: "API key status is temporarily unavailable" });
+    }
+  });
+
   app.post("/api/access/check", async (req, res) => {
     try {
       const apiKey = z.string().trim().min(6).max(300).parse(req.body.apiKey);
-      res.json(await checkAccessKey(apiKey));
+      const upstream = await proxyPublicApi("/usage/check", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Origin: "https://miraiapi.com",
+          ...(forwardedUsageCookie(req.headers.cookie) ? { Cookie: forwardedUsageCookie(req.headers.cookie)! } : {}),
+        },
+        body: JSON.stringify({ api_key: apiKey }),
+        redirect: "manual",
+      });
+      forwardUsageSessionCookie(upstream, res);
+      const text = await upstream.text();
+      const body = JSON.parse(text || "{}");
+      if (!upstream.ok || body.success === false) return res.status(upstream.status).json({ error: body.message || "The API key could not be checked" });
+      res.json(body.data ?? body);
     } catch (error) {
       res.status(error instanceof z.ZodError ? 400 : 502).json({ error: error instanceof z.ZodError ? "Enter a valid API key" : "The API key could not be checked" });
     }
