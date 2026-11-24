@@ -31,6 +31,16 @@ export function clearProgress(): void {
 }
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+const BINARY_FILE_EXTENSIONS = new Set([
+  ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".webp", ".tif", ".tiff",
+  ".eot", ".otf", ".ttf", ".woff", ".woff2",
+  ".pdf", ".zip", ".gz", ".tar", ".7z", ".rar",
+  ".mp3", ".mp4", ".mpeg", ".mpg", ".ogg", ".wav", ".webm", ".mov",
+]);
+
+export function isBinaryUpdateFile(filePath: string) {
+  return BINARY_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
 
 function parseGitHubUrl(url: string): { owner: string; repo: string; branch?: string } | null {
   const cleaned = url.trim().replace(/\.git$/, "").replace(/\/$/, "");
@@ -263,7 +273,7 @@ export async function applyUpdate(
             if (!fs.existsSync(dir)) {
               fs.mkdirSync(dir, { recursive: true });
             }
-            fs.writeFileSync(stagingPath, content, "utf-8");
+            fs.writeFileSync(stagingPath, content);
             return "downloaded";
           } catch (err) {
             console.error(`[Update] Failed to download ${file.path}:`, err);
@@ -370,12 +380,12 @@ export async function applyUpdate(
         const stagingPath = path.join(stagingDir, file.path);
         if (!fs.existsSync(stagingPath)) continue;
         const localPath = path.resolve(baseDir, file.path);
-        const newContent = fs.readFileSync(stagingPath, "utf-8");
+        const newContent = fs.readFileSync(stagingPath);
         const dir = path.dirname(localPath);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
         }
-        fs.writeFileSync(localPath, newContent, "utf-8");
+        fs.writeFileSync(localPath, newContent);
       } catch {}
     }
 
@@ -581,11 +591,12 @@ export async function applyUpdate(
   }
 }
 
-async function fetchFileContent(owner: string, repo: string, filePath: string, branch: string): Promise<string> {
+async function fetchFileContent(owner: string, repo: string, filePath: string, branch: string): Promise<string | Buffer> {
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
   const res = await fetch(url, {
     headers: { "User-Agent": "DigitalMarketplace-Updater" },
   });
   if (!res.ok) throw new Error(`Failed to fetch ${filePath}`);
+  if (isBinaryUpdateFile(filePath)) return Buffer.from(await res.arrayBuffer());
   return res.text();
 }
