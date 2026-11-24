@@ -23,7 +23,6 @@ const CHUNK_SIZE = 100;
 
 type ProgressCallback = (progress: BackupProgress) => void;
 
-<<<<<<< HEAD
 function describeImportError(error: any): string {
   const code = String(error?.code || '');
   const constraint = error?.constraint ? String(error.constraint).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 100) : '';
@@ -35,8 +34,6 @@ function describeImportError(error: any): string {
   return 'This row could not be imported; check the server log for details';
 }
 
-=======
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 
 let cachedEncryptionKey: string | null = null;
@@ -273,14 +270,9 @@ export async function importDatabase(
   jobId: string,
   importData: DatabaseExport,
   onProgress: ProgressCallback
-<<<<<<< HEAD
 ): Promise<{ success: boolean; message: string; details: Record<string, number>; errors: string[] }> {
   const details: Record<string, number> = {};
   const importErrorMessages: string[] = [];
-=======
-): Promise<{ success: boolean; message: string; details: Record<string, number> }> {
-  const details: Record<string, number> = {};
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
   let importErrors = 0;
   let lastEmittedPercent = -1;
 
@@ -314,7 +306,6 @@ export async function importDatabase(
       percent: 0,
       message: 'Invalid import file format',
     });
-<<<<<<< HEAD
     return { success: false, message: 'Invalid import file format', details, errors: [] };
   }
 
@@ -347,16 +338,6 @@ export async function importDatabase(
       onProgress({ jobId, phase: 'error', percent: 0, message });
       return { success: false, message, details, errors: [message] };
     }
-=======
-    return { success: false, message: 'Invalid import file format', details };
-  }
-
-  // Existing installs can have the same email with a different generated ID.
-  // Map backup user IDs to the current account IDs before importing references.
-  const userIdMap = new Map<string, string>();
-  for (const importedUser of (importData.tables.users?.data || []) as Array<{ id: string; email: string }>) {
-    const [existingUser] = await db.select().from(users).where(eq(users.email, importedUser.email));
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
     userIdMap.set(importedUser.id, existingUser?.id || importedUser.id);
   }
 
@@ -558,7 +539,6 @@ export async function importDatabase(
               });
             }
           } else if (tableName === 'emailTemplates') {
-<<<<<<< HEAD
             // Template names are unique and remain stable across database restores,
             // while generated IDs can differ between installations.
             const templateRow = row as any;
@@ -568,22 +548,13 @@ export async function importDatabase(
             if (existing.length === 0 && templateRow.id) {
               existing = await db.select().from(emailTemplates).where(eq(emailTemplates.id, templateRow.id));
             }
-=======
-            // Email templates - check by id and upsert
-            const templateRow = row as any;
-            const existing = await db.select().from(emailTemplates).where(eq(emailTemplates.id, templateRow.id));
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
             if (existing.length > 0) {
               await db.update(emailTemplates).set({
                 name: templateRow.name,
                 subject: templateRow.subject,
                 htmlContent: templateRow.htmlContent,
                 isDefault: templateRow.isDefault,
-<<<<<<< HEAD
               }).where(eq(emailTemplates.id, existing[0].id));
-=======
-              }).where(eq(emailTemplates.id, templateRow.id));
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
             } else {
               await db.insert(emailTemplates).values(templateRow);
             }
@@ -614,17 +585,11 @@ export async function importDatabase(
           }
           importedCount++;
         } catch (err: any) {
-<<<<<<< HEAD
           const reason = describeImportError(err);
           const errorMsg = `Error in ${tableName} row ${i + 1}: ${reason}`;
           console.error(errorMsg);
           errors.push(errorMsg);
           if (importErrorMessages.length < 5) importErrorMessages.push(errorMsg);
-=======
-          const errorMsg = `Error in ${tableName} row ${i}: ${err?.message || err}`;
-          console.error(errorMsg);
-          errors.push(errorMsg);
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
           importErrors++;
         }
         
@@ -646,15 +611,11 @@ export async function importDatabase(
         console.log(`Errors in ${tableName}:`, errors);
       }
     } catch (error: any) {
-<<<<<<< HEAD
       const reason = describeImportError(error);
       const errorMsg = `Error importing table ${tableName}: ${reason}`;
       console.error(errorMsg);
       if (importErrorMessages.length < 5) importErrorMessages.push(errorMsg);
       importErrors++;
-=======
-      console.error(`Error importing table ${tableName}:`, error?.message || error);
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
       details[tableName] = 0;
     }
   }
@@ -664,7 +625,6 @@ export async function importDatabase(
   console.log('Import details:', details);
 
   // Reload encryption key from database after import to ensure the imported key is used
-<<<<<<< HEAD
   try {
     await reloadEncryptionKey();
   } catch (error: any) {
@@ -674,14 +634,10 @@ export async function importDatabase(
     if (importErrorMessages.length < 5) importErrorMessages.push(errorMsg);
     importErrors++;
   }
-=======
-  await reloadEncryptionKey();
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
 
   // Create detailed summary message
   const summaryParts = Object.entries(details).map(([table, count]) => `${table}: ${count}`);
   const summaryMessage = importErrors > 0
-<<<<<<< HEAD
     ? `Import was incomplete: ${importErrors} error(s). ${summaryParts.join(', ')}`
     : `Import completed. ${summaryParts.join(', ')}`;
 
@@ -699,23 +655,6 @@ export async function importDatabase(
     message: summaryMessage,
     details,
     errors: importErrorMessages,
-=======
-    ? `Import completed with ${importErrors} row errors. ${summaryParts.join(', ')}`
-    : `Import completed. ${summaryParts.join(', ')}`;
-
-
-  onProgress({
-    jobId,
-    phase: 'completed',
-    percent: 100,
-    message: summaryMessage,
-  });
-
-  return { 
-    success: importErrors === 0,
-    message: summaryMessage, 
-    details 
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
   };
 }
 

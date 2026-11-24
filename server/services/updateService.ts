@@ -32,7 +32,6 @@ export function clearProgress(): void {
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-<<<<<<< HEAD
 function parseGitHubUrl(url: string): { owner: string; repo: string; branch?: string } | null {
   const cleaned = url.trim().replace(/\.git$/, "").replace(/\/$/, "");
   const match = cleaned.match(/github\.com\/([^\/]+)\/([^\/\s#?]+)/);
@@ -44,20 +43,6 @@ function parseGitHubUrl(url: string): { owner: string; repo: string; branch?: st
     catch { branch = branchMatch[1]; }
   }
   return { owner: match[1], repo: match[2], branch };
-=======
-function parseGitHubUrl(url: string): { owner: string; repo: string; branch: string } | null {
-  const cleaned = url.trim().replace(/\.git$/, "").replace(/\/$/, "");
-
-  const match = cleaned.match(/github\.com\/([^\/]+)\/([^\/\s#?]+)/);
-  if (!match) return null;
-
-  const branchMatch = cleaned.match(/\/tree\/([^\/\s#?]+)/);
-  return {
-    owner: match[1],
-    repo: match[2],
-    branch: branchMatch ? branchMatch[1] : "main",
-  };
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
 }
 
 export function generateRepoFingerprint(owner: string, repo: string): string {
@@ -68,7 +53,6 @@ export function verifyRepoFingerprint(owner: string, repo: string, storedFingerp
   return generateRepoFingerprint(owner, repo) === storedFingerprint;
 }
 
-<<<<<<< HEAD
 async function resolveRepositoryBranch(repository: { owner: string; repo: string; branch?: string }): Promise<string> {
   if (repository.branch) return repository.branch;
   const repoData = await fetchGitHubApi("/repos/" + repository.owner + "/" + repository.repo);
@@ -78,8 +62,6 @@ async function resolveRepositoryBranch(repository: { owner: string; repo: string
   return repoData.default_branch;
 }
 
-=======
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
 async function fetchGitHubApi(endpoint: string): Promise<any> {
   console.log(`[Update] GitHub API: ${endpoint}`);
   const res = await fetch(`https://api.github.com${endpoint}`, {
@@ -104,17 +86,12 @@ export async function validateGitHubRepo(repoUrl: string): Promise<{ valid: bool
 
   try {
     const repoData = await fetchGitHubApi(`/repos/${parsed.owner}/${parsed.repo}`);
-<<<<<<< HEAD
     const branch = parsed.branch || repoData.default_branch;
     if (typeof branch !== "string" || !branch) {
       return { valid: false, error: "GitHub did not return a default branch for this repository." };
     }
     const fingerprint = generateRepoFingerprint(parsed.owner, parsed.repo);
     return { valid: true, ...parsed, branch, owner: repoData.owner.login, repo: repoData.name, fingerprint };
-=======
-    const fingerprint = generateRepoFingerprint(parsed.owner, parsed.repo);
-    return { valid: true, ...parsed, owner: repoData.owner.login, repo: repoData.name, fingerprint };
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
   } catch (e: any) {
     if (e.message.includes("404")) {
       return { valid: false, error: "Repository not found. Make sure it's public or check the URL." };
@@ -127,12 +104,8 @@ export async function checkForUpdates(repoUrl: string, currentCommit: string): P
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) throw new Error("Invalid GitHub URL");
 
-<<<<<<< HEAD
   const branch = await resolveRepositoryBranch(parsed);
   const branchData = await fetchGitHubApi(`/repos/${parsed.owner}/${parsed.repo}/branches/${encodeURIComponent(branch)}`);
-=======
-  const branchData = await fetchGitHubApi(`/repos/${parsed.owner}/${parsed.repo}/branches/${parsed.branch}`);
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
   const latestCommit = branchData.commit.sha;
 
   if (currentCommit === latestCommit) {
@@ -175,10 +148,6 @@ const IGNORE_PATTERNS = [
   /^dist\//,
   /^\.upm\//,
   /^replit\.md$/,
-<<<<<<< HEAD
-=======
-  /^package-lock\.json$/,
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
   /^migrations\//,
   /^\.env/,
   /^attached_assets\//,
@@ -188,11 +157,7 @@ const IGNORE_PATTERNS = [
 ];
 
 const TRACKED_DIRS = ["client", "server", "shared", "script"];
-<<<<<<< HEAD
 const TRACKED_ROOT_FILES = ["package.json", "package-lock.json", "vite.config.ts", "postcss.config.js", "tailwind.config.ts", "tsconfig.json", "drizzle.config.ts", "ecosystem.config.cjs"];
-=======
-const TRACKED_ROOT_FILES = ["package.json", "vite.config.ts", "postcss.config.js", "tailwind.config.ts", "tsconfig.json", "drizzle.config.ts", "ecosystem.config.cjs"];
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
 
 function shouldIgnoreFile(filePath: string): boolean {
   return IGNORE_PATTERNS.some(pattern => pattern.test(filePath));
@@ -264,12 +229,8 @@ export async function applyUpdate(
   try {
     await emitRange(1, 3, "checking", "Verifying repository...");
 
-<<<<<<< HEAD
     const branch = await resolveRepositoryBranch(parsed);
     const branchData = await fetchGitHubApi(`/repos/${parsed.owner}/${parsed.repo}/branches/${encodeURIComponent(branch)}`);
-=======
-    const branchData = await fetchGitHubApi(`/repos/${parsed.owner}/${parsed.repo}/branches/${parsed.branch}`);
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
     const latestCommit = branchData.commit.sha;
 
     await emitRange(4, 7, "downloading", "Fetching file tree from GitHub...");
@@ -296,11 +257,7 @@ export async function applyUpdate(
       const results = await Promise.all(
         batch.map(async (file: any) => {
           try {
-<<<<<<< HEAD
             const content = await fetchFileContent(parsed.owner, parsed.repo, file.path, branch);
-=======
-            const content = await fetchFileContent(parsed.owner, parsed.repo, file.path, parsed.branch);
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
             const stagingPath = path.join(stagingDir, file.path);
             const dir = path.dirname(stagingPath);
             if (!fs.existsSync(dir)) {
@@ -349,23 +306,17 @@ export async function applyUpdate(
     const originalPackageJson = fs.existsSync(path.join(baseDir, "package.json"))
       ? fs.readFileSync(path.join(baseDir, "package.json"), "utf-8")
       : null;
-<<<<<<< HEAD
     const originalPackageLock = fs.existsSync(path.join(baseDir, "package-lock.json"))
       ? fs.readFileSync(path.join(baseDir, "package-lock.json"), "utf-8")
       : null;
-=======
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
     const stagingPackageJson = path.join(stagingDir, "package.json");
     if (fs.existsSync(stagingPackageJson)) {
       fs.copyFileSync(stagingPackageJson, path.join(baseDir, "package.json"));
     }
-<<<<<<< HEAD
     const stagingPackageLock = path.join(stagingDir, "package-lock.json");
     if (fs.existsSync(stagingPackageLock)) {
       fs.copyFileSync(stagingPackageLock, path.join(baseDir, "package-lock.json"));
     }
-=======
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
 
     await emitRange(67, 72, "rebuilding", "Installing dependencies...");
 
@@ -379,11 +330,8 @@ export async function applyUpdate(
     } catch (installErr: any) {
       const errMsg = installErr.stderr?.toString() || installErr.message || "Unknown install error";
       console.error("[Update] npm install failed:", errMsg);
-<<<<<<< HEAD
       if (originalPackageJson !== null) fs.writeFileSync(path.join(baseDir, "package.json"), originalPackageJson, "utf-8");
       if (originalPackageLock !== null) fs.writeFileSync(path.join(baseDir, "package-lock.json"), originalPackageLock, "utf-8");
-=======
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
       fs.rmSync(stagingDir, { recursive: true, force: true });
       await emit({ jobId, type: "error", progress: 72, message: `npm install failed: ${errMsg.substring(0, 200)}` });
       return { success: false, filesUpdated: 0, newCommit: latestCommit, error: errMsg };
@@ -445,7 +393,6 @@ export async function applyUpdate(
         const stdout = buildErr.stdout?.toString() || "";
         const stderr = buildErr.stderr?.toString() || "";
         const combined = `${stdout}\n${stderr}`;
-<<<<<<< HEAD
         const lines = combined.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
         const exportDiagnostic = lines.find(line =>
           /not exported by|does not provide an export named|is not exported from/i.test(line)
@@ -462,22 +409,6 @@ export async function applyUpdate(
         const outputTail = lines.slice(-8).join(" | ");
         const errMsg = exportDiagnostic || errorDiagnostic || errorLines[errorLines.length - 1]
           || outputTail || ("Production build exited with code " + (buildErr.status ?? "unknown"));
-=======
-        const errorLines = combined
-          .split(/\r?\n/)
-          .map(line => line.trim())
-          .filter(line => /\berror\b|failed|failure|cannot find|could not resolve|not found/i.test(line) && !/warning|warn:|warnings?/i.test(line));
-        const outputTail = combined
-          .split(/\r?\n/)
-          .map(line => line.trim())
-          .filter(Boolean)
-          .slice(-8)
-          .join(" | ");
-        const errMsg = errorLines[errorLines.length - 1]
-          || outputTail
-          || buildErr.message
-          || "Unknown build error";
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
         console.error("[Update] npm run build failed, restoring backup...\n", combined);
 
         const currentTracked = getLocalTrackedFiles(baseDir);
@@ -508,12 +439,9 @@ export async function applyUpdate(
         if (originalPackageJson !== null) {
           try { fs.writeFileSync(path.join(baseDir, "package.json"), originalPackageJson, "utf-8"); } catch {}
         }
-<<<<<<< HEAD
         if (originalPackageLock !== null) {
           try { fs.writeFileSync(path.join(baseDir, "package-lock.json"), originalPackageLock, "utf-8"); } catch {}
         }
-=======
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
         try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch {}
         try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch {}
 
@@ -522,11 +450,6 @@ export async function applyUpdate(
       }
     }
 
-<<<<<<< HEAD
-=======
-    try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch {}
-
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
     await emitRange(85, 87, "applying", "Cleaning up removed files...");
 
     const remoteFilePaths = new Set(files.map((f: any) => f.path));
@@ -564,7 +487,6 @@ export async function applyUpdate(
         env: execEnv,
       });
     } catch (dbErr: any) {
-<<<<<<< HEAD
       const stdout = dbErr.stdout?.toString() || "";
       const stderr = dbErr.stderr?.toString() || "";
       const errMsg = (stderr || stdout || dbErr.message || "Unknown DB sync error").trim();
@@ -613,12 +535,6 @@ export async function applyUpdate(
 
     try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch {}
 
-=======
-      const errMsg = dbErr.stderr?.toString() || dbErr.message || "Unknown DB sync error";
-      console.error("[Update] drizzle-kit push failed:", errMsg);
-    }
-
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
     await emitRange(94, 97, "rebuilding", "Cleaning up staging files...");
 
     try {
@@ -640,11 +556,7 @@ export async function applyUpdate(
     if (isProduction) {
       setTimeout(() => {
         try {
-<<<<<<< HEAD
           execSync("pm2 restart beng --update-env", { stdio: "pipe", timeout: 10000 });
-=======
-          execSync("pm2 restart all", { stdio: "pipe", timeout: 10000 });
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
         } catch {
           console.log("[Update] pm2 restart failed, exiting process for auto-restart...");
           process.exit(0);

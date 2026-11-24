@@ -4,13 +4,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-<<<<<<< HEAD
     "dev": "tsx server/index.ts",
     "build": "tsx script/build.ts",
-=======
-    "dev": "NODE_ENV=development node_modules/.bin/tsx server/index.ts",
-    "build": "node_modules/.bin/tsx script/build.ts",
->>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test": "npm run test:payments && npm run test:integration",
