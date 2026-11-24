@@ -181,7 +181,7 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
             className="relative font-bold text-foreground text-sm sm:text-base line-clamp-2 leading-tight text-center"
             data-testid={`text-product-name-${product.id}`}
           >
-            {product.name}
+            {hasVariants ? product.variantGroupTitle?.trim() || product.name : product.name}
           </h3>
         </div>
 

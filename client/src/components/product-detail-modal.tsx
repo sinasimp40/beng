@@ -99,12 +99,11 @@ export function ProductDetailModal({
   };
 
   const handleAddToCart = () => {
-    onAddToCart(activeProduct, quantity, hasVariants ? getOptionLabel(activeProduct) : undefined);
+    onAddToCart(activeProduct, quantity, hasVariants ? product.variantGroupTitle?.trim() || undefined : undefined);
     setQuantity(1);
   };
 
   const getOptionLabel = (option: Product) => {
-    if (option.category && option.category.trim()) return option.category;
     return option.name;
   };
 
@@ -154,17 +153,18 @@ export function ProductDetailModal({
             className="text-xl font-bold text-gray-900 dark:text-white mb-3 leading-tight"
             data-testid="text-modal-product-name"
           >
-            {product.name}
+            {hasVariants ? product.variantGroupTitle?.trim() || product.name : product.name}
           </h2>
 
           {hasVariants && (
             <div className="mb-4">
               <div className="flex items-center gap-2 mb-2.5">
                 <div className="h-px flex-1 bg-gradient-to-r from-primary/30 to-transparent" />
-                <span className="text-[10px] uppercase tracking-[0.15em] text-primary font-bold">Choose Plan</span>
+                <span className="text-[10px] uppercase tracking-[0.15em] text-primary font-bold">Choose plan <span className="text-muted-foreground">({allOptions.length})</span></span>
                 <div className="h-px flex-1 bg-gradient-to-l from-primary/30 to-transparent" />
               </div>
-              <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(${Math.min(allOptions.length, 3)}, 1fr)` }}>
+              <div className="max-h-56 overflow-y-auto overscroll-contain pr-1 thin-scrollbar">
+                <div className="grid grid-cols-2 gap-2">
                 {allOptions.map((option) => {
                   const isSelected = option.id === selectedVariantId;
                   const label = getOptionLabel(option);
@@ -175,7 +175,7 @@ export function ProductDetailModal({
                       type="button"
                       disabled={outOfStock}
                       onClick={() => !outOfStock && handleVariantSelect(option.id)}
-                      className={`relative flex flex-col items-center gap-0.5 px-2 py-2.5 rounded-lg text-center transition-all duration-200 ${
+                      className={`relative flex min-h-[76px] flex-col justify-center gap-1 px-2.5 py-2 rounded-lg text-left transition-all duration-200 ${
                         outOfStock
                           ? "border border-gray-200/40 dark:border-white/[0.04] bg-gray-50 dark:bg-white/[0.01] cursor-not-allowed"
                           : isSelected
@@ -189,12 +189,12 @@ export function ProductDetailModal({
                           <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
                         </div>
                       )}
-                      <span className={`text-xs font-semibold leading-tight ${
+                      <span className={`line-clamp-2 break-words text-[11px] font-semibold leading-tight ${
                         outOfStock ? "text-gray-300 dark:text-white/20" : isSelected ? "text-gray-900 dark:text-white" : "text-gray-600 dark:text-white/60"
                       }`}>
                         {label}
                       </span>
-                      <span className={`text-sm font-bold ${
+                      <span className={`text-sm font-bold tabular-nums ${
                         outOfStock ? "text-gray-300 dark:text-white/15" : isSelected ? "text-primary" : "text-gray-500 dark:text-white/40"
                       }`}>
                         ${option.price.toFixed(2)}
@@ -207,6 +207,7 @@ export function ProductDetailModal({
                     </button>
                   );
                 })}
+                </div>
               </div>
             </div>
           )}

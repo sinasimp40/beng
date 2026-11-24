@@ -478,6 +478,7 @@ export async function importDatabase(
                 imageUrl: productRow.imageUrl,
                 countries: productRow.countries,
                 stockList: productRow.stockList,
+                variantGroupTitle: productRow.variantGroupTitle ?? null,
               }).where(eq(products.id, productRow.id));
               console.log(`Updated existing product: ${productRow.name}`);
             } else {

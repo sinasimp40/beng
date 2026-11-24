@@ -291,6 +291,7 @@ export const products = pgTable("products", {
   enabled: integer("enabled").notNull().default(1),
   isHot: integer("is_hot").notNull().default(0),
   parentId: varchar("parent_id"),
+  variantGroupTitle: text("variant_group_title"),
   fulfillmentProvider: text("fulfillment_provider"),
   providerPackageCode: text("provider_package_code"),
   providerAvailable: integer("provider_available"),

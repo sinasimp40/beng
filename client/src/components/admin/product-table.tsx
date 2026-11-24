@@ -31,7 +31,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Package, Pencil, Trash2, Search, Filter, Flame, EyeOff, Eye, X, Link2, Unlink, GitBranch, Copy } from "lucide-react";
+import { Package, Pencil, Trash2, Search, Filter, Flame, EyeOff, Eye, X, Link2, Unlink, GitBranch, Copy, Save } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -76,6 +76,7 @@ export function ProductTable({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [hotFilter, setHotFilter] = useState<string>("all");
   const [linkingParentId, setLinkingParentId] = useState<string | null>(null);
+  const [linkingGroupTitle, setLinkingGroupTitle] = useState("");
   const { toast } = useToast();
 
   const filteredProducts = (() => {
@@ -117,14 +118,25 @@ export function ProductTable({
     return parent?.name || null;
   };
 
+  const saveVariantGroupTitle = async () => {
+    if (!linkingParentId) return;
+    try {
+      await apiRequest("PATCH", `/api/products/${linkingParentId}`, { variantGroupTitle: linkingGroupTitle.trim() || null });
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/products?admin=true"] });
+      toast({ title: "Group title saved" });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to save variant group title", variant: "destructive" });
+    }
+  };
+
   const handleLinkVariant = async (childId: string) => {
     if (!linkingParentId) return;
     try {
       await apiRequest("POST", `/api/products/${linkingParentId}/variants`, { childIds: [childId] });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
       queryClient.invalidateQueries({ queryKey: ["/api/products?admin=true"] });
-      toast({ title: "Variant linked", description: "Product added as variant" });
-      setLinkingParentId(null);
+      toast({ title: "Variant linked", description: "Select another product to add more, or cancel when finished." });
     } catch (e) {
       toast({ title: "Error", description: "Failed to link variant", variant: "destructive" });
     }
@@ -215,19 +227,33 @@ export function ProductTable({
       </div>
 
       {linkingParentId && (
-        <div className="flex items-center gap-3 p-3 rounded-md bg-primary/10 border border-primary/20">
+        <div className="flex flex-wrap items-center gap-3 p-3 rounded-md bg-primary/10 border border-primary/20">
           <GitBranch className="w-4 h-4 text-primary shrink-0" />
-          <span className="text-sm text-primary">
-            Click the <Link2 className="w-3.5 h-3.5 inline" /> icon on a product to add it as a variant of <strong>{getParentName(linkingParentId) || 'selected product'}</strong>
-          </span>
+          <div className="min-w-0 flex-1 text-sm text-primary">
+            <p>Link any number of products as variants of <strong>{getParentName(linkingParentId) || "selected product"}</strong>. Select each product’s link icon; the picker stays open.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Input
+                value={linkingGroupTitle}
+                onChange={event => setLinkingGroupTitle(event.target.value)}
+                placeholder="Enter a title for this variant group"
+                maxLength={200}
+                className="h-9 min-w-[220px] flex-1 bg-background"
+                aria-label="Variant group title"
+                data-testid="input-variant-group-title-linking"
+              />
+              <Button size="sm" variant="outline" onClick={saveVariantGroupTitle} className="gap-2" data-testid="button-save-variant-group-title">
+                <Save className="h-4 w-4" />Save title
+              </Button>
+            </div>
+          </div>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setLinkingParentId(null)}
-            className="ml-auto text-xs"
+            className="text-xs"
             data-testid="button-cancel-linking"
           >
-            Cancel
+            Done
           </Button>
         </div>
       )}
@@ -363,7 +389,11 @@ export function ProductTable({
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => setLinkingParentId(linkingParentId === product.id ? null : product.id)}
+                          onClick={() => {
+                            const nextParentId = linkingParentId === product.id ? null : product.id;
+                            setLinkingParentId(nextParentId);
+                            setLinkingGroupTitle(nextParentId ? product.variantGroupTitle || "" : "");
+                          }}
                           className={linkingParentId === product.id ? "text-primary bg-primary/10" : "text-muted-foreground"}
                           title={linkingParentId === product.id ? "Cancel linking" : "Add variants to this product"}
                           data-testid={`button-start-link-${product.id}`}

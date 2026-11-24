@@ -34,6 +34,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 const productFormSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
+  variantGroupTitle: z.string().max(200).optional().default(""),
   description: z.string().min(1, "Description is required"),
   price: z.coerce.number().min(0.01, "Price must be at least $0.01"),
   category: z.string().optional().default(""),
@@ -71,6 +72,7 @@ export function ProductForm({
     resolver: zodResolver(productFormSchema),
     defaultValues: {
       name: product?.name || "",
+      variantGroupTitle: product?.variantGroupTitle || "",
       description: product?.description || "",
       price: product?.price || 0,
       category: isCustomCategory ? "" : (product?.category || ""),
@@ -98,6 +100,7 @@ export function ProductForm({
     const finalCategory = data.customCategory?.trim() || data.category || "";
     onSubmit({
       name: data.name,
+      variantGroupTitle: data.variantGroupTitle?.trim() || null,
       description: data.description,
       price: data.price,
       category: finalCategory,
@@ -143,6 +146,27 @@ export function ProductForm({
                       data-testid="input-product-name"
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="variantGroupTitle"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Variant group title (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="For example: Claude 10M tokens"
+                      {...field}
+                      data-testid="input-variant-group-title"
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Shown as the heading when this product has variants. Leave blank to use the product name.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}
