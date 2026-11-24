@@ -3408,6 +3408,7 @@ export async function registerRoutes(
 
       const result = await importDatabase(jobId, importData, broadcastDatabaseProgress);
       if (!result.success) {
+<<<<<<< HEAD
         const diagnostic = result.errors?.length ? ` Details: ${result.errors.join(' | ')}` : '';
         return res.status(400).json({
           error: `${result.message}${diagnostic}`,
@@ -3415,6 +3416,9 @@ export async function registerRoutes(
           details: result.details,
           errors: result.errors || [],
         });
+=======
+        return res.status(400).json({ error: result.message, details: result.details });
+>>>>>>> 2d0771485a1e014f0d57959e6332fdb4b1980e59
       }
       
       // After import, reload settings into environment variables and services
