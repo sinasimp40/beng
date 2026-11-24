@@ -65,6 +65,7 @@ export function ProductForm({
 }: ProductFormProps) {
   const [countrySearch, setCountrySearch] = useState("");
   const isCustomCategory = product?.category && !CATEGORIES.includes(product.category as any);
+  const isMiraiManagedProduct = product?.fulfillmentProvider === "mirai" && Boolean(product.providerPackageCode);
   
   const form = useForm<ProductFormData>({
     resolver: zodResolver(productFormSchema),
@@ -101,8 +102,8 @@ export function ProductForm({
       price: data.price,
       category: finalCategory,
       imageUrl: data.imageUrl || null,
-      stockList: normalizedStockList || null,
-      stock: uniqueLines.length,
+      stockList: isMiraiManagedProduct ? (product?.stockList ?? null) : (normalizedStockList || null),
+      stock: isMiraiManagedProduct ? (product?.stock ?? 0) : uniqueLines.length,
       countries: data.countries || [],
       enabled: data.enabled ? 1 : 0,
       isHot: data.isHot ? 1 : 0,
@@ -184,28 +185,34 @@ export function ProductForm({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="stockList"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Stock List (one item per line)</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      placeholder="email@example.com:password123&#10;user@domain.com:pass456&#10;account@site.com:key789"
-                      className="resize-none min-h-[150px] font-mono text-sm"
-                      {...field}
-                      data-testid="input-product-stocklist"
-                    />
-                  </FormControl>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Enter account credentials, one per line. Stock count will be auto-calculated.
-                    Current items: {(field.value?.split('\n').filter((l: string) => l.trim() !== '') || []).length}
-                  </p>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {isMiraiManagedProduct ? (
+              <div className="rounded-md border border-primary/20 bg-primary/5 p-4 text-sm text-muted-foreground">
+                Mirai product stock is managed automatically from the provider catalog and reseller balance. You do not need to enter stock items here.
+              </div>
+            ) : (
+              <FormField
+                control={form.control}
+                name="stockList"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Stock List (one item per line)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="email@example.com:password123&#10;user@domain.com:pass456&#10;account@site.com:key789"
+                        className="resize-none min-h-[150px] font-mono text-sm"
+                        {...field}
+                        data-testid="input-product-stocklist"
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Enter account credentials, one per line. Stock count will be auto-calculated.
+                      Current items: {(field.value?.split('\n').filter((l: string) => l.trim() !== '') || []).length}
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
           </div>
 
           <div className="space-y-4">
@@ -232,16 +239,16 @@ export function ProductForm({
               />
 
               <FormItem>
-                <FormLabel>Stock (auto-calculated)</FormLabel>
+                <FormLabel>{isMiraiManagedProduct ? "Mirai stock (automatic)" : "Stock (auto-calculated)"}</FormLabel>
                 <Input
                   type="number"
-                  value={calculatedStock}
+                  value={isMiraiManagedProduct ? product?.stock ?? 0 : calculatedStock}
                   disabled
                   className="bg-muted cursor-not-allowed"
                   data-testid="input-product-stock"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Calculated from stock list lines
+                  {isMiraiManagedProduct ? "Synced from Mirai; edits to other product details will not reset it." : "Calculated from stock list lines"}
                 </p>
               </FormItem>
             </div>

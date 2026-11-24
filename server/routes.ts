@@ -14,7 +14,7 @@ import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptTok
 import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
-import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, providerStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
+import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, miraiPackageStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
 import type { Order } from "@shared/schema";
 import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, recordSuccessfulLogin } from "./security";
 
@@ -626,7 +626,7 @@ async function syncMiraiProducts() {
   const imported: any[] = [];
   for (const pkg of packages) {
     const current = existingByCode.get(pkg.code);
-    const stock = providerStock(balance.balance_vnd, pkg.reseller_price_vnd);
+    const stock = miraiPackageStock(balance.balance_vnd, pkg);
     const legacyDescription = `${pkg.name}${pkg.models?.length ? `\n\nModels: ${pkg.models.join(", ")}` : ""}`;
     const localizedCategory = providerCategory(pkg.group);
     const product = current
@@ -2761,7 +2761,9 @@ export async function registerRoutes(
         if (!product || product.enabled !== 1) {
           return res.status(400).json({ error: "A product in your cart is no longer available" });
         }
-        if (product.stock < requestedQuantity) {
+        // Mirai stock is provider-managed and may be stale between scheduled syncs;
+        // validate it against Mirai live below instead of blocking before that check.
+        if (!isMiraiProduct(product) && product.stock < requestedQuantity) {
           return res.status(400).json({ error: `Only ${product.stock} units of ${product.name} are available` });
         }
         checkoutLines.push({
@@ -2785,7 +2787,7 @@ export async function registerRoutes(
           const [balance, packages] = await Promise.all([getMiraiBalance(), getMiraiPackages()]);
           for (const line of checkoutLines) {
             const pkg = packages.find(item => item.code === line.product.providerPackageCode);
-            const available = pkg ? providerStock(balance.balance_vnd, pkg.reseller_price_vnd) : 0;
+            const available = pkg ? miraiPackageStock(balance.balance_vnd, pkg) : 0;
             const updated = await storage.updateProduct(line.product.id, {
               stock: available,
               providerAvailable: available > 0 ? 1 : 0,

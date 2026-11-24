@@ -303,7 +303,7 @@ export function ProductTable({
                         )}
                         {product.fulfillmentProvider === "mirai" && (
                           <Badge variant="outline" className={product.providerAvailable === 0 ? "text-amber-500 border-amber-500/30 text-[10px]" : "text-cyan-500 border-cyan-500/30 text-[10px]"}>
-                            {product.providerAvailable === 0 ? "Mirai balance low" : "Mirai"}
+                            {product.providerAvailable === 0 ? "Mirai unavailable" : "Mirai"}
                           </Badge>
                         )}
                       </div>

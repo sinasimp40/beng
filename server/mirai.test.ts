@@ -1,6 +1,9 @@
 ﻿import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { miraiCodes, providerDefaultPrice, providerProductName, providerStock, isMiraiProduct } from "./mirai";
+// The pure helper tests do not use the database, but the module also wires
+// storage at import time. Set a non-connecting placeholder URL for that setup.
+process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:1/test";
+const { miraiCodes, miraiPackageStock, providerDefaultPrice, providerProductName, providerStock, isMiraiProduct } = await import("./mirai");
 
 describe("Mirai reseller helpers", () => {
   it("uses the plural redeem_codes list in full", () => {
@@ -15,6 +18,14 @@ describe("Mirai reseller helpers", () => {
     assert.equal(providerStock(100000, 25000), 4);
     assert.equal(providerStock(-1, 25000), 0);
     assert.equal(providerStock(100000, 0), 0);
+  });
+
+  it("respects Mirai daily limits while preserving unlimited package stock", () => {
+    assert.equal(providerStock(100000, 25000, { remainingToday: 2 }), 2);
+    assert.equal(providerStock(100000, 25000, { remainingToday: 0 }), 0);
+    assert.equal(providerStock(100000, 25000, { remainingToday: 0, unlimited: true }), 4);
+    assert.equal(providerStock(100000, 25000, { active: false }), 0);
+    assert.equal(miraiPackageStock(100000, { reseller_price_vnd: 25000, remaining_today: 1 }), 1);
   });
 
   it("uses the reseller cost for a safe imported default price", () => {

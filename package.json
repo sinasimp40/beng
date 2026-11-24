@@ -8,9 +8,10 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "test": "npm run test:payments && npm run test:integration",
+    "test": "npm run test:payments && npm run test:integration && npm run test:mirai",
     "test:payments": "node --import tsx --test server/nowpayments.test.ts",
     "test:integration": "node --import tsx --test server/credit.test.ts server/fulfillment.test.ts server/checkout.test.ts",
+    "test:mirai": "node --import tsx --test server/mirai.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

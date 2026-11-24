@@ -19,6 +19,10 @@ export interface MiraiPackage {
   models?: string[];
   remaining_today?: number;
   unlimited?: boolean;
+  // These optional flags are respected if Mirai returns them in a future live catalog.
+  enabled?: boolean;
+  active?: boolean;
+  available?: boolean;
 }
 
 interface MiraiResponse<T> { success: boolean; data?: T; message?: string; error?: string }
@@ -162,9 +166,40 @@ export function miraiCodes(data: { redeem_codes?: string[]; redeem_code?: string
     : data.redeem_code ? [data.redeem_code] : [];
 }
 
-export function providerStock(balanceVnd: number, unitPriceVnd: number) {
-  if (!Number.isFinite(unitPriceVnd) || unitPriceVnd <= 0) return 0;
-  return Math.min(10000, Math.floor(Math.max(0, balanceVnd) / unitPriceVnd));
+export function providerStock(
+  balanceVnd: number,
+  unitPriceVnd: number,
+  options: { remainingToday?: number; unlimited?: boolean; active?: boolean } = {},
+) {
+  // A provider-side disabled package must never be sellable, even if there is
+  // still enough reseller balance for it.
+  if (options.active === false) return 0;
+
+  const price = Number(unitPriceVnd);
+  const balance = Number(balanceVnd);
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(balance) || balance <= 0) return 0;
+
+  // Mirai permits up to 10,000 units per order. This also prevents an
+  // unexpectedly large wallet balance from becoming an unsafe storefront stock value.
+  const affordable = Math.min(10000, Math.floor(Math.max(0, balance) / price));
+  if (affordable <= 0 || options.unlimited) return affordable;
+
+  // `remaining_today` only caps daily-limited packages. An absent value means
+  // Mirai did not publish a daily cap, so balance remains the source of truth.
+  if (options.remainingToday === undefined || options.remainingToday === null) return affordable;
+  const remaining = Number(options.remainingToday);
+  if (!Number.isFinite(remaining)) return affordable;
+  return Math.min(affordable, Math.max(0, Math.floor(remaining)));
+}
+
+export function miraiPackageStock(balanceVnd: number, pkg: MiraiPackage) {
+  return providerStock(balanceVnd, pkg.reseller_price_vnd, {
+    remainingToday: pkg.remaining_today,
+    unlimited: pkg.unlimited,
+    // Live catalogs commonly omit these flags. If Mirai supplies one, false
+    // takes precedence and removes the product from customer availability.
+    active: pkg.active ?? pkg.enabled ?? pkg.available,
+  });
 }
 
 export function newProviderIdempotencyKey() {
