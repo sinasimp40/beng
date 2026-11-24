@@ -1,5 +1,5 @@
 import type { IconType } from "react-icons";
-import { SiAnthropic, SiClaude, SiGooglegemini, SiTelegram } from "react-icons/si";
+import { SiAnthropic, SiClaude, SiGooglegemini, SiMoonshotai, SiQwen, SiTelegram } from "react-icons/si";
 import { Bot, Code2, Cpu, Sparkles } from "lucide-react";
 
 type Mark = { name: string; Icon: IconType; color: string; image?: string };
@@ -14,8 +14,8 @@ const marks: Record<string, Mark> = {
   openai: { name: "OpenAI", Icon: Sparkles, color: "#10A37F", image: "/images/ai-providers/openai.svg" },
   gemini: { name: "Gemini", Icon: SiGooglegemini, color: "#8B7CFF", image: "/images/ai-providers/gemini.svg" },
   deepseek: { name: "DeepSeek", Icon: Cpu, color: "#4A91F2", image: "/images/ai-providers/deepseek.svg" },
-  qwen: { name: "Qwen", Icon: Sparkles, color: "#615CED" },
-  kimi: { name: "Kimi", Icon: Bot, color: "#52A6FF" },
+  qwen: { name: "Qwen", Icon: SiQwen, color: "#615CED", image: "/images/ai-providers/qwen.svg" },
+  kimi: { name: "Kimi", Icon: SiMoonshotai, color: "#52A6FF", image: "/images/ai-providers/kimi.svg" },
   telegram: { name: "Telegram", Icon: SiTelegram, color: "#2AABEE" },
   cline: { name: "Cline", Icon: Code2, color: "#8FBF3F" },
   roo: { name: "Roo Code", Icon: Code2, color: "#E2794A" },
@@ -30,7 +30,7 @@ const modelFamilies = ["claude", "codex", "gpt", "gemini", "deepseek", "qwen", "
 export function modelMarks(models: string[], group?: string): Mark[] {
   const text = `${group || ""} ${models.join(" ")}`.toLowerCase();
   const found = modelFamilies.filter(family => text.includes(family));
-  return found.length ? found.map(family => marks[family]) : [{ name: "AI models", Icon: Cpu, color: "#64748B" }];
+  return found.map(family => marks[family]);
 }
 
 function ArtworkImage({ mark, size }: { mark: Mark; size: "small" | "large" }) {
