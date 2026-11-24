@@ -1,5 +1,5 @@
 import type { IconType } from "react-icons";
-import { SiAnthropic, SiClaude, SiGooglegemini, SiMoonshotai, SiQwen, SiTelegram } from "react-icons/si";
+import { SiAnthropic, SiClaude, SiGooglegemini, SiMoonshotai, SiTelegram } from "react-icons/si";
 import { Bot, Code2, Cpu, Sparkles } from "lucide-react";
 
 type Mark = { name: string; Icon: IconType; color: string; image?: string };
@@ -14,7 +14,7 @@ const marks: Record<string, Mark> = {
   openai: { name: "OpenAI", Icon: Sparkles, color: "#10A37F", image: "/images/ai-providers/openai.svg" },
   gemini: { name: "Gemini", Icon: SiGooglegemini, color: "#8B7CFF", image: "/images/ai-providers/gemini.svg" },
   deepseek: { name: "DeepSeek", Icon: Cpu, color: "#4A91F2", image: "/images/ai-providers/deepseek.svg" },
-  qwen: { name: "Qwen", Icon: SiQwen, color: "#615CED", image: "/images/ai-providers/qwen.svg" },
+  qwen: { name: "Qwen", Icon: Cpu, color: "#615CED", image: "/images/ai-providers/qwen.svg" },
   kimi: { name: "Kimi", Icon: SiMoonshotai, color: "#52A6FF", image: "/images/ai-providers/kimi.svg" },
   telegram: { name: "Telegram", Icon: SiTelegram, color: "#2AABEE" },
   cline: { name: "Cline", Icon: Code2, color: "#8FBF3F" },
