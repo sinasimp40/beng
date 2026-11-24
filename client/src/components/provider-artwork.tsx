@@ -1,22 +1,20 @@
-import type { IconType } from "react-icons";
-import { SiAnthropic, SiClaude, SiGooglegemini, SiMoonshotai, SiTelegram } from "react-icons/si";
-import { Bot, Code2, Cpu, Sparkles } from "lucide-react";
+import { Bot, Code2, Cpu, Sparkles, type LucideIcon } from "lucide-react";
 
-type Mark = { name: string; Icon: IconType; color: string; image?: string };
+type Mark = { name: string; Icon: LucideIcon; color: string; image?: string };
 
 const marks: Record<string, Mark> = {
-  claude: { name: "Claude", Icon: SiClaude, color: "#D97757", image: "/images/ai-providers/claude-app.png" },
-  anthropic: { name: "Anthropic", Icon: SiAnthropic, color: "#D97757", image: "/images/ai-providers/claude.svg" },
-  "claude-code": { name: "Claude Code", Icon: SiClaude, color: "#D97757", image: "/images/ai-providers/claude-app.png" },
+  claude: { name: "Claude", Icon: Bot, color: "#D97757", image: "/images/ai-providers/claude-app.png" },
+  anthropic: { name: "Anthropic", Icon: Bot, color: "#D97757", image: "/images/ai-providers/claude.svg" },
+  "claude-code": { name: "Claude Code", Icon: Bot, color: "#D97757", image: "/images/ai-providers/claude-app.png" },
   codex: { name: "Codex", Icon: Code2, color: "#10A37F", image: "/images/ai-providers/codex-app.png" },
   chatgpt: { name: "ChatGPT", Icon: Sparkles, color: "#10A37F", image: "/images/ai-providers/openai.svg" },
   gpt: { name: "GPT", Icon: Sparkles, color: "#10A37F", image: "/images/ai-providers/openai.svg" },
   openai: { name: "OpenAI", Icon: Sparkles, color: "#10A37F", image: "/images/ai-providers/openai.svg" },
-  gemini: { name: "Gemini", Icon: SiGooglegemini, color: "#8B7CFF", image: "/images/ai-providers/gemini.svg" },
+  gemini: { name: "Gemini", Icon: Sparkles, color: "#8B7CFF", image: "/images/ai-providers/gemini.svg" },
   deepseek: { name: "DeepSeek", Icon: Cpu, color: "#4A91F2", image: "/images/ai-providers/deepseek.svg" },
   qwen: { name: "Qwen", Icon: Cpu, color: "#615CED", image: "/images/ai-providers/qwen.svg" },
-  kimi: { name: "Kimi", Icon: SiMoonshotai, color: "#52A6FF", image: "/images/ai-providers/kimi.svg" },
-  telegram: { name: "Telegram", Icon: SiTelegram, color: "#2AABEE" },
+  kimi: { name: "Kimi", Icon: Sparkles, color: "#52A6FF", image: "/images/ai-providers/kimi.svg" },
+  telegram: { name: "Telegram", Icon: Bot, color: "#2AABEE" },
   cline: { name: "Cline", Icon: Code2, color: "#8FBF3F" },
   roo: { name: "Roo Code", Icon: Code2, color: "#E2794A", image: "/images/ai-providers/roo-code.png" },
   opencode: { name: "OpenCode", Icon: Code2, color: "#F26D4F", image: "/images/ai-providers/opencode.png" },
