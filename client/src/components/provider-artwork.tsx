@@ -1,25 +1,19 @@
 import { Bot, Code2, Cpu, Sparkles, type LucideIcon } from "lucide-react";
 import { useState } from "react";
-import claudeAppImage from "../assets/ai-providers/claude-app.png";
 import claudeImage from "../assets/ai-providers/claude.svg";
-import codexImage from "../assets/ai-providers/codex-app.png";
 import deepseekImage from "../assets/ai-providers/deepseek.svg";
 import geminiImage from "../assets/ai-providers/gemini.svg";
-import hermesImage from "../assets/ai-providers/hermes.png";
 import kimiImage from "../assets/ai-providers/kimi.svg";
 import openaiImage from "../assets/ai-providers/openai.svg";
-import openclawImage from "../assets/ai-providers/openclaw.png";
-import opencodeImage from "../assets/ai-providers/opencode.png";
 import qwenImage from "../assets/ai-providers/qwen.svg";
-import rooCodeImage from "../assets/ai-providers/roo-code.png";
-import vietcodeImage from "../assets/ai-providers/vietcode.png";
+import { codexImage, hermesImage, openclawImage, opencodeImage, rooCodeImage, vietcodeImage } from "./provider-artwork-data";
 
 type Mark = { name: string; Icon: LucideIcon; color: string; image?: string };
 
 const marks: Record<string, Mark> = {
-  claude: { name: "Claude", Icon: Bot, color: "#D97757", image: claudeAppImage },
+  claude: { name: "Claude", Icon: Bot, color: "#D97757", image: claudeImage },
   anthropic: { name: "Anthropic", Icon: Bot, color: "#D97757", image: claudeImage },
-  "claude-code": { name: "Claude Code", Icon: Bot, color: "#D97757", image: claudeAppImage },
+  "claude-code": { name: "Claude Code", Icon: Bot, color: "#D97757", image: claudeImage },
   codex: { name: "Codex", Icon: Code2, color: "#10A37F", image: codexImage },
   chatgpt: { name: "ChatGPT", Icon: Sparkles, color: "#10A37F", image: openaiImage },
   gpt: { name: "GPT", Icon: Sparkles, color: "#10A37F", image: openaiImage },
