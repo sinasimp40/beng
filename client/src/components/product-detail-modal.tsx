@@ -120,47 +120,72 @@ export function ProductDetailModal({
           <X className="w-4 h-4" />
         </button>
 
-        <div className="relative w-full aspect-[16/10] overflow-hidden">
-          {hasImage ? (
-            <img
-              src={activeProduct.imageUrl!}
-              alt={activeProduct.name}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-[hsl(0_0%_8%)]">
-              <Package className="w-16 h-16 text-primary/30" />
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-white dark:from-[hsl(0_0%_4%)] via-transparent to-transparent" />
-          
-          <div className="absolute top-3 left-3">
-            <div className="relative">
-              <div className="absolute -inset-0.5 bg-gradient-to-r from-primary to-purple-600 rounded-md blur opacity-60" />
-              <span className="relative inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-primary to-purple-600 text-white rounded-md shadow-lg shadow-primary/30">
-                <Sparkles className="w-3 h-3" />
-                {activeProduct.category}
-              </span>
+        {hasVariants ? (
+          <div className="border-b border-gray-200 bg-gray-50/80 px-5 pb-4 pt-5 dark:border-white/[0.08] dark:bg-white/[0.02]">
+            <div className="flex items-center gap-3 pr-9">
+              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/[0.1] dark:bg-white/[0.04]">
+                {hasImage ? (
+                  <img src={activeProduct.imageUrl!} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="grid h-full w-full place-items-center">
+                    <Package className="h-6 w-6 text-primary/50" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                  <Sparkles className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{activeProduct.category}</span>
+                </span>
+                <h2
+                  className="break-words [overflow-wrap:anywhere] text-lg font-bold leading-snug text-gray-900 dark:text-white"
+                  data-testid="text-modal-product-name"
+                >
+                  {product.variantGroupTitle?.trim() || "Choose your plan"}
+                </h2>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-white/50">Choose from {allOptions.length} options</p>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="relative w-full aspect-[16/10] overflow-hidden bg-gray-100 dark:bg-[hsl(0_0%_8%)]">
+              {hasImage ? (
+                <img
+                  src={activeProduct.imageUrl!}
+                  alt={activeProduct.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <Package className="h-16 w-16 text-primary/30" />
+                </div>
+              )}
+              <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/50 to-transparent" />
+              <div className="absolute left-3 top-3 max-w-[calc(100%-4rem)]">
+                <span className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-black/55 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-sm">
+                  <Sparkles className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{activeProduct.category}</span>
+                </span>
+              </div>
+            </div>
+            <div className="px-5 pt-4">
+              <h2
+                className="break-words text-xl font-bold leading-tight text-gray-900 dark:text-white"
+                data-testid="text-modal-product-name"
+              >
+                {product.name}
+              </h2>
+            </div>
+          </>
+        )}
 
-        <div className="px-5 pb-5 -mt-8 relative z-10">
-          <h2
-            className="mb-3 break-words text-xl font-bold leading-tight text-gray-900 dark:text-white"
-            data-testid="text-modal-product-name"
-          >
-            {hasVariants ? product.variantGroupTitle?.trim() || "Choose your plan" : product.name}
-          </h2>
-
+        <div className="relative z-10 px-5 pb-5 pt-4">
           {hasVariants && (
             <section aria-label="Choose a product option" className="mb-4 rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-white/[0.025]">
-              <div className="mb-2.5 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-800 dark:text-white/85">Choose an option</h3>
-                  <p className="mt-0.5 text-[11px] text-gray-500 dark:text-white/45">{allOptions.length} options</p>
-                </div>
-                {selectedVariantId && <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">Selected</span>}
+              <div className="mb-2.5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-800 dark:text-white/85">Choose an option</h3>
+                <p className="mt-0.5 text-[11px] text-gray-500 dark:text-white/45">Select the plan that works for you</p>
               </div>
               <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-1 thin-scrollbar">
                 {allOptions.map((option) => {
@@ -172,7 +197,7 @@ export function ProductDetailModal({
                       type="button"
                       disabled={outOfStock}
                       onClick={() => !outOfStock && handleVariantSelect(option.id)}
-                      className={`relative flex w-full min-h-[64px] items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+                      className={`relative flex w-full min-h-[68px] items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
                         outOfStock
                           ? "cursor-not-allowed border-gray-200/60 bg-gray-100/70 dark:border-white/[0.05] dark:bg-white/[0.01]"
                           : isSelected
@@ -185,7 +210,7 @@ export function ProductDetailModal({
                         <Check className="h-3 w-3" strokeWidth={3} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={`block line-clamp-2 break-words text-xs font-semibold leading-snug ${outOfStock ? "text-gray-400 dark:text-white/30" : "text-gray-900 dark:text-white/90"}`}>
+                        <span className={`block break-words text-sm font-semibold leading-snug [overflow-wrap:anywhere] ${outOfStock ? "text-gray-400 dark:text-white/30" : "text-gray-900 dark:text-white/90"}`}>
                           {option.name}
                         </span>
                         <span className={`mt-1 block text-[10px] font-medium ${outOfStock ? "text-red-400/70" : "text-emerald-600 dark:text-emerald-400"}`}>
@@ -203,7 +228,7 @@ export function ProductDetailModal({
           )}
 
           <div 
-            className="text-sm text-gray-500 dark:text-[hsl(0_0%_55%)] mb-4 leading-relaxed max-h-[200px] overflow-y-auto thin-scrollbar [&_img]:max-w-full [&_img]:h-auto [&_img]:max-h-[150px] [&_img]:object-contain [&_img]:mx-auto [&_img]:block [&_img]:my-2 [&_div]:text-inherit"
+            className="mb-4 max-h-[200px] overflow-y-auto break-words leading-relaxed [overflow-wrap:anywhere] text-sm text-gray-500 dark:text-[hsl(0_0%_55%)] thin-scrollbar [&_img]:max-w-full [&_img]:h-auto [&_img]:max-h-[150px] [&_img]:object-contain [&_img]:mx-auto [&_img]:block [&_img]:my-2 [&_div]:text-inherit"
             dangerouslySetInnerHTML={{ __html: renderedDescription }}
           />
 
