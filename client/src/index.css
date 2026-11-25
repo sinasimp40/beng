@@ -546,3 +546,49 @@ body > div[style*="position: fixed"][style*="z-index"]:has(iframe[src*="recaptch
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.4);
 }
+
+/* Product detail dialog: compact, theme-aware scrollbars */
+.product-detail-dialog {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  scrollbar-gutter: stable;
+}
+
+.product-detail-dialog::-webkit-scrollbar {
+  width: 6px;
+}
+
+.product-detail-dialog::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.product-detail-dialog::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 999px;
+}
+
+.product-detail-dialog::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.55);
+}
+
+.option-list-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+}
+
+.option-list-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.option-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.option-list-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.28);
+  border-radius: 999px;
+}
+
+.option-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}

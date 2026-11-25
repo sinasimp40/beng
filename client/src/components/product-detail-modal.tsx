@@ -107,7 +107,7 @@ export function ProductDetailModal({
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-0 bg-white dark:bg-[hsl(0_0%_4%)] border border-gray-200 dark:border-[hsl(0_0%_15%)] gap-0">
+      <DialogContent className="product-detail-dialog w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-0 bg-white dark:bg-[hsl(0_0%_4%)] border border-gray-200 dark:border-[hsl(0_0%_15%)] gap-0">
         <DialogHeader className="sr-only">
           <DialogTitle>{hasVariants ? product.variantGroupTitle?.trim() || "Choose your plan" : product.name}</DialogTitle>
         </DialogHeader>
@@ -187,7 +187,7 @@ export function ProductDetailModal({
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-800 dark:text-white/85">Choose an option</h3>
                 <p className="mt-0.5 text-[11px] text-gray-500 dark:text-white/45">Select the plan that works for you</p>
               </div>
-              <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-1 thin-scrollbar">
+              <div className="option-list-scroll max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-2 thin-scrollbar">
                 {allOptions.map((option) => {
                   const isSelected = option.id === selectedVariantId;
                   const outOfStock = option.stock === 0;
