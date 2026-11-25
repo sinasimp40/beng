@@ -52,7 +52,7 @@ const adminTabs = [
 
 export default function Admin() {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingProduct, setEditingProduct] = useState<ProductWithVariants | null>(null);
   const [activeTab, setActiveTab] = useState("statistics");
   const { toast } = useToast();
   const { user, isAdmin, isLoading: isAuthLoading } = useAuth();
@@ -175,7 +175,7 @@ export default function Admin() {
     );
   }
 
-  const handleEdit = (product: Product) => {
+  const handleEdit = (product: ProductWithVariants) => {
     setEditingProduct(product);
     setViewMode("edit");
   };

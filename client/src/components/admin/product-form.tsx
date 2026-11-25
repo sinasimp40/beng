@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import type { Product, InsertProduct } from "@shared/schema";
+import type { Product, ProductWithVariants, InsertProduct } from "@shared/schema";
 import { CATEGORIES, COUNTRIES } from "@shared/schema";
 import {
   Form,
@@ -50,7 +50,7 @@ const productFormSchema = z.object({
 type ProductFormData = z.infer<typeof productFormSchema>;
 
 interface ProductFormProps {
-  product?: Product;
+  product?: ProductWithVariants;
   onSubmit: (data: InsertProduct) => void;
   onCancel: () => void;
   isSubmitting?: boolean;
@@ -67,6 +67,7 @@ export function ProductForm({
   const [countrySearch, setCountrySearch] = useState("");
   const isCustomCategory = product?.category && !CATEGORIES.includes(product.category as any);
   const isMiraiManagedProduct = product?.fulfillmentProvider === "mirai" && Boolean(product.providerPackageCode);
+  const hasVariants = Boolean(product?.variants?.length);
   
   const form = useForm<ProductFormData>({
     resolver: zodResolver(productFormSchema),
@@ -90,6 +91,10 @@ export function ProductForm({
   const calculatedStock = stockList?.split('\n').filter(line => line.trim() !== '').length || 0;
 
   const handleSubmit = (data: ProductFormData) => {
+    if (hasVariants && !data.variantGroupTitle?.trim()) {
+      form.setError("variantGroupTitle", { type: "manual", message: "A separate title is required for a product with variants." });
+      return;
+    }
     const rawLines = data.stockList?.split('\n') || [];
     const normalizedLines = rawLines
       .map(line => line.trim())
@@ -156,7 +161,7 @@ export function ProductForm({
               name="variantGroupTitle"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Variant group title (optional)</FormLabel>
+                  <FormLabel>Variant group title {hasVariants ? "(required)" : "(optional)"}</FormLabel>
                   <FormControl>
                     <Input
                       placeholder="For example: Claude 10M tokens"
@@ -165,7 +170,9 @@ export function ProductForm({
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">
-                    Shown as the heading when this product has variants. Leave blank to use the product name.
+                    {hasVariants
+                      ? "Required for products with variants. This is the storefront heading; each option keeps its own product name."
+                      : "Optional until this product is used as a variant group."}
                   </p>
                   <FormMessage />
                 </FormItem>

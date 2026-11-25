@@ -1358,6 +1358,12 @@ export async function registerRoutes(
   app.patch("/api/products/:id", requireAdmin, async (req, res) => {
     try {
       const validatedData = insertProductSchema.partial().parse(req.body);
+      if (Object.prototype.hasOwnProperty.call(validatedData, "variantGroupTitle") && !validatedData.variantGroupTitle?.trim()) {
+        const allProducts = await storage.getAllProducts();
+        if (allProducts.some(candidate => candidate.parentId === req.params.id)) {
+          return res.status(400).json({ error: "A separate title is required while this product has linked variants" });
+        }
+      }
       const product = await storage.updateProduct(req.params.id, validatedData);
       if (!product) {
         return res.status(404).json({ error: "Product not found" });
@@ -1409,6 +1415,9 @@ export async function registerRoutes(
       }
       if (parent.parentId) {
         return res.status(400).json({ error: "Cannot add variants to a product that is itself a variant" });
+      }
+      if (!parent.variantGroupTitle?.trim()) {
+        return res.status(400).json({ error: "Save a separate variant group title before linking variants" });
       }
       for (const childId of childIds) {
         if (childId === parentId) {

@@ -50,10 +50,11 @@ export function ProductDetailModal({
 
   useEffect(() => {
     if (open && product) {
-      setSelectedVariantId(product.id);
+      const firstInStockOption = allOptions.find(option => option.stock > 0);
+      setSelectedVariantId(product.stock > 0 ? product.id : firstInStockOption?.id ?? product.id);
       setQuantity(1);
     }
-  }, [open, product?.id]);
+  }, [open, product?.id, allOptions]);
   
   const renderedDescription = useMemo(() => {
     return renderBBCode(activeProduct?.description || '');
@@ -103,16 +104,12 @@ export function ProductDetailModal({
     setQuantity(1);
   };
 
-  const getOptionLabel = (option: Product) => {
-    return option.name;
-  };
-
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-0 bg-white dark:bg-[hsl(0_0%_4%)] border border-gray-200 dark:border-[hsl(0_0%_15%)] gap-0">
         <DialogHeader className="sr-only">
-          <DialogTitle>{product.name}</DialogTitle>
+          <DialogTitle>{hasVariants ? product.variantGroupTitle?.trim() || "Choose your plan" : product.name}</DialogTitle>
         </DialogHeader>
 
         <button
@@ -150,24 +147,24 @@ export function ProductDetailModal({
 
         <div className="px-5 pb-5 -mt-8 relative z-10">
           <h2
-            className="text-xl font-bold text-gray-900 dark:text-white mb-3 leading-tight"
+            className="mb-3 break-words text-xl font-bold leading-tight text-gray-900 dark:text-white"
             data-testid="text-modal-product-name"
           >
-            {hasVariants ? product.variantGroupTitle?.trim() || product.name : product.name}
+            {hasVariants ? product.variantGroupTitle?.trim() || "Choose your plan" : product.name}
           </h2>
 
           {hasVariants && (
-            <div className="mb-4">
-              <div className="flex items-center gap-2 mb-2.5">
-                <div className="h-px flex-1 bg-gradient-to-r from-primary/30 to-transparent" />
-                <span className="text-[10px] uppercase tracking-[0.15em] text-primary font-bold">Choose plan <span className="text-muted-foreground">({allOptions.length})</span></span>
-                <div className="h-px flex-1 bg-gradient-to-l from-primary/30 to-transparent" />
+            <section aria-label="Choose a product option" className="mb-4 rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-white/[0.025]">
+              <div className="mb-2.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-800 dark:text-white/85">Choose an option</h3>
+                  <p className="mt-0.5 text-[11px] text-gray-500 dark:text-white/45">{allOptions.length} options</p>
+                </div>
+                {selectedVariantId && <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">Selected</span>}
               </div>
-              <div className="max-h-56 overflow-y-auto overscroll-contain pr-1 thin-scrollbar">
-                <div className="grid grid-cols-2 gap-2">
+              <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain pr-1 thin-scrollbar">
                 {allOptions.map((option) => {
                   const isSelected = option.id === selectedVariantId;
-                  const label = getOptionLabel(option);
                   const outOfStock = option.stock === 0;
                   return (
                     <button
@@ -175,41 +172,34 @@ export function ProductDetailModal({
                       type="button"
                       disabled={outOfStock}
                       onClick={() => !outOfStock && handleVariantSelect(option.id)}
-                      className={`relative flex min-h-[76px] flex-col justify-center gap-1 px-2.5 py-2 rounded-lg text-left transition-all duration-200 ${
+                      className={`relative flex w-full min-h-[64px] items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
                         outOfStock
-                          ? "border border-gray-200/40 dark:border-white/[0.04] bg-gray-50 dark:bg-white/[0.01] cursor-not-allowed"
+                          ? "cursor-not-allowed border-gray-200/60 bg-gray-100/70 dark:border-white/[0.05] dark:bg-white/[0.01]"
                           : isSelected
-                            ? "border-2 border-primary bg-primary/10 dark:bg-primary/15"
-                            : "border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] hover:border-primary/40 hover:bg-primary/5 dark:hover:bg-primary/5 cursor-pointer"
+                            ? "border-primary bg-primary/10 shadow-sm shadow-primary/10 dark:bg-primary/15"
+                            : "border-gray-200 bg-white hover:border-primary/40 hover:bg-primary/[0.04] dark:border-white/[0.08] dark:bg-white/[0.025] dark:hover:bg-primary/5"
                       }`}
                       data-testid={`button-variant-${option.id}`}
                     >
-                      {isSelected && (
-                        <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-primary flex items-center justify-center shadow-lg border-2 border-white dark:border-[hsl(0_0%_4%)]">
-                          <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-                        </div>
-                      )}
-                      <span className={`line-clamp-2 break-words text-[11px] font-semibold leading-tight ${
-                        outOfStock ? "text-gray-300 dark:text-white/20" : isSelected ? "text-gray-900 dark:text-white" : "text-gray-600 dark:text-white/60"
-                      }`}>
-                        {label}
+                      <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${isSelected ? "border-primary bg-primary text-white" : "border-gray-300 text-transparent dark:border-white/20"}`} aria-hidden="true">
+                        <Check className="h-3 w-3" strokeWidth={3} />
                       </span>
-                      <span className={`text-sm font-bold tabular-nums ${
-                        outOfStock ? "text-gray-300 dark:text-white/15" : isSelected ? "text-primary" : "text-gray-500 dark:text-white/40"
-                      }`}>
+                      <span className="min-w-0 flex-1">
+                        <span className={`block line-clamp-2 break-words text-xs font-semibold leading-snug ${outOfStock ? "text-gray-400 dark:text-white/30" : "text-gray-900 dark:text-white/90"}`}>
+                          {option.name}
+                        </span>
+                        <span className={`mt-1 block text-[10px] font-medium ${outOfStock ? "text-red-400/70" : "text-emerald-600 dark:text-emerald-400"}`}>
+                          {outOfStock ? "Out of stock" : `${option.stock.toLocaleString()} in stock`}
+                        </span>
+                      </span>
+                      <span className={`shrink-0 text-sm font-bold tabular-nums ${isSelected ? "text-primary" : "text-gray-700 dark:text-white/75"}`}>
                         ${option.price.toFixed(2)}
-                      </span>
-                      <span className={`text-[9px] uppercase tracking-wider font-medium ${
-                        outOfStock ? "text-red-300 dark:text-red-400/40" : isSelected ? "text-emerald-600 dark:text-emerald-400" : "text-gray-400 dark:text-white/25"
-                      }`}>
-                        {option.stock > 0 ? `${option.stock} in stock` : "out of stock"}
                       </span>
                     </button>
                   );
                 })}
-                </div>
               </div>
-            </div>
+            </section>
           )}
 
           <div 

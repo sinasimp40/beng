@@ -178,10 +178,10 @@ export function ProductCard({ product, onBuyNow, onAddToCart, index = 0 }: Produ
           <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           
           <h3
-            className="relative font-bold text-foreground text-sm sm:text-base line-clamp-2 leading-tight text-center"
+            className="relative break-words font-bold text-foreground text-sm sm:text-base line-clamp-2 leading-tight text-center"
             data-testid={`text-product-name-${product.id}`}
           >
-            {hasVariants ? product.variantGroupTitle?.trim() || product.name : product.name}
+            {hasVariants ? product.variantGroupTitle?.trim() || "Choose your plan" : product.name}
           </h3>
         </div>
 

@@ -38,7 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 
 interface ProductTableProps {
   products: ProductWithVariants[];
-  onEdit: (product: Product) => void;
+  onEdit: (product: ProductWithVariants) => void;
   onDelete: (productId: string) => void;
   onDuplicate: (product: Product) => void;
   isDeleting?: boolean;
@@ -77,6 +77,8 @@ export function ProductTable({
   const [hotFilter, setHotFilter] = useState<string>("all");
   const [linkingParentId, setLinkingParentId] = useState<string | null>(null);
   const [linkingGroupTitle, setLinkingGroupTitle] = useState("");
+  const [savedLinkingGroupTitle, setSavedLinkingGroupTitle] = useState("");
+  const [savingGroupTitle, setSavingGroupTitle] = useState(false);
   const { toast } = useToast();
 
   const filteredProducts = (() => {
@@ -120,18 +122,31 @@ export function ProductTable({
 
   const saveVariantGroupTitle = async () => {
     if (!linkingParentId) return;
+    const title = linkingGroupTitle.trim();
+    if (!title) {
+      toast({ title: "Group title required", description: "Enter a title before adding products to this variant group.", variant: "destructive" });
+      return;
+    }
     try {
-      await apiRequest("PATCH", `/api/products/${linkingParentId}`, { variantGroupTitle: linkingGroupTitle.trim() || null });
+      setSavingGroupTitle(true);
+      await apiRequest("PATCH", `/api/products/${linkingParentId}`, { variantGroupTitle: title });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
       queryClient.invalidateQueries({ queryKey: ["/api/products?admin=true"] });
+      setSavedLinkingGroupTitle(title);
       toast({ title: "Group title saved" });
     } catch (e) {
       toast({ title: "Error", description: "Failed to save variant group title", variant: "destructive" });
+    } finally {
+      setSavingGroupTitle(false);
     }
   };
 
   const handleLinkVariant = async (childId: string) => {
     if (!linkingParentId) return;
+    if (!linkingGroupTitle.trim() || linkingGroupTitle.trim() !== savedLinkingGroupTitle) {
+      toast({ title: "Save the group title first", description: "Each variant group needs its own title, separate from its product options.", variant: "destructive" });
+      return;
+    }
     try {
       await apiRequest("POST", `/api/products/${linkingParentId}/variants`, { childIds: [childId] });
       queryClient.invalidateQueries({ queryKey: ["/api/products"] });
@@ -230,19 +245,19 @@ export function ProductTable({
         <div className="flex flex-wrap items-center gap-3 p-3 rounded-md bg-primary/10 border border-primary/20">
           <GitBranch className="w-4 h-4 text-primary shrink-0" />
           <div className="min-w-0 flex-1 text-sm text-primary">
-            <p>Link any number of products as variants of <strong>{getParentName(linkingParentId) || "selected product"}</strong>. Select each product’s link icon; the picker stays open.</p>
+            <p>Give this group its own title, then link any number of products as options. The main product name will remain the name of its option.</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Input
                 value={linkingGroupTitle}
                 onChange={event => setLinkingGroupTitle(event.target.value)}
-                placeholder="Enter a title for this variant group"
+                placeholder="Required group title (e.g. Claude plans)"
                 maxLength={200}
                 className="h-9 min-w-[220px] flex-1 bg-background"
                 aria-label="Variant group title"
                 data-testid="input-variant-group-title-linking"
               />
-              <Button size="sm" variant="outline" onClick={saveVariantGroupTitle} className="gap-2" data-testid="button-save-variant-group-title">
-                <Save className="h-4 w-4" />Save title
+              <Button size="sm" variant="outline" onClick={saveVariantGroupTitle} disabled={savingGroupTitle || !linkingGroupTitle.trim() || linkingGroupTitle.trim() === savedLinkingGroupTitle} className="gap-2" data-testid="button-save-variant-group-title">
+                <Save className="h-4 w-4" />{savingGroupTitle ? "Saving…" : linkingGroupTitle.trim() && linkingGroupTitle.trim() === savedLinkingGroupTitle ? "Title saved" : "Save title"}
               </Button>
             </div>
           </div>
@@ -368,8 +383,9 @@ export function ProductTable({
                           variant="ghost"
                           size="icon"
                           onClick={() => handleLinkVariant(product.id)}
-                          className="text-primary"
-                          title="Link as variant"
+                          disabled={savingGroupTitle || !linkingGroupTitle.trim() || linkingGroupTitle.trim() !== savedLinkingGroupTitle}
+                          className="text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                          title={linkingGroupTitle.trim() === savedLinkingGroupTitle && savedLinkingGroupTitle ? "Link as variant" : "Save the group title before linking variants"}
                           data-testid={`button-link-variant-${product.id}`}
                         >
                           <Link2 className="w-4 h-4" />
@@ -392,7 +408,9 @@ export function ProductTable({
                           onClick={() => {
                             const nextParentId = linkingParentId === product.id ? null : product.id;
                             setLinkingParentId(nextParentId);
-                            setLinkingGroupTitle(nextParentId ? product.variantGroupTitle || "" : "");
+                            const existingTitle = nextParentId ? product.variantGroupTitle?.trim() || "" : "";
+                            setLinkingGroupTitle(existingTitle);
+                            setSavedLinkingGroupTitle(existingTitle);
                           }}
                           className={linkingParentId === product.id ? "text-primary bg-primary/10" : "text-muted-foreground"}
                           title={linkingParentId === product.id ? "Cancel linking" : "Add variants to this product"}
