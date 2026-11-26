@@ -39,6 +39,26 @@ function forwardedUsageCookie(cookieHeader?: string): string | undefined {
   return allowed.length ? allowed.join("; ") : undefined;
 }
 
+async function getAccessGatewayStatus() {
+  try {
+    const response = await fetch("https://api.miraiapi.com/v1/models", {
+      headers: { Accept: "application/json", "User-Agent": "BuyBit-Status-Check/1.0" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (response.status === 429) {
+      return { status: "degraded", message: "AI gateway is reachable but currently rate-limited", configured: true };
+    }
+    if (response.status >= 500 || response.status === 404) {
+      return { status: "down", message: "AI provider endpoint is unavailable", configured: true };
+    }
+    // A 401/403 is expected because this lightweight probe does not send a key.
+    // It confirms the upstream gateway responds without consuming customer quota.
+    return { status: "operational", message: "AI gateway endpoint is reachable", configured: true };
+  } catch {
+    return { status: "down", message: "AI gateway is unreachable or timed out", configured: true };
+  }
+}
+
 const installerApps = new Set(["vietcode", "claude-code", "codex", "openclaw", "opencode", "hermes"]);
 
 function publicAccessOrigin(req: Request): string {
@@ -2480,6 +2500,8 @@ export async function registerRoutes(
 
       statuses.server = { status: "operational", message: "Server is running" };
 
+      statuses.aiGateway = await getAccessGatewayStatus();
+
       try {
         if (nowPaymentsService.isConfigured()) {
           const apiStatus = await nowPaymentsService.getApiStatus();
@@ -3700,6 +3722,8 @@ export async function registerRoutes(
     try {
       const statuses: Record<string, any> = {};
       statuses.server = { status: "operational", message: "Server is running" };
+
+      statuses.aiGateway = await getAccessGatewayStatus();
       try {
         if (nowPaymentsService.isConfigured()) {
           const apiStatus = await nowPaymentsService.getApiStatus();
@@ -3752,6 +3776,8 @@ export async function registerRoutes(
     try {
       const statuses: Record<string, any> = {};
       statuses.server = { status: "operational", message: "Server is running" };
+
+      statuses.aiGateway = await getAccessGatewayStatus();
       
       try {
         if (nowPaymentsService.isConfigured()) {

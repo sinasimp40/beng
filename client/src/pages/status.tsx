@@ -15,7 +15,8 @@ import {
   XCircle, 
   AlertTriangle, 
   Settings2,
-  Clock
+  Clock,
+  Network
 } from "lucide-react";
 
 interface ServiceStatus {
@@ -33,6 +34,7 @@ interface StatusData {
 const SERVICE_CONFIG: Record<string, { label: string; icon: typeof Server; description: string }> = {
   server: { label: "Application Server", icon: Server, description: "Core application server handling all requests" },
   payment: { label: "Payment Gateway", icon: CreditCard, description: "Cryptocurrency payment processing service" },
+  aiGateway: { label: "AI API Gateway", icon: Network, description: "BuyBit gateway reachability; individual model availability may vary" },
   database: { label: "Database", icon: Database, description: "PostgreSQL database for data storage" },
   email: { label: "Email Service", icon: Mail, description: "SMTP email delivery service" },
   websocket: { label: "Live Updates", icon: Wifi, description: "Real-time WebSocket connections" },
