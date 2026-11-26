@@ -14,7 +14,7 @@ import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptTok
 import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
-import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, miraiPackageStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
+import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, forwardAnthropicAccessApi, forwardAccessInstaller, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, miraiPackageStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
 import type { Order } from "@shared/schema";
 import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, recordSuccessfulLogin } from "./security";
 
@@ -37,6 +37,29 @@ function forwardedUsageCookie(cookieHeader?: string): string | undefined {
   if (!cookieHeader) return undefined;
   const allowed = cookieHeader.split(";").map(part => part.trim()).filter(part => usageCookieNames.has(part.slice(0, part.indexOf("="))));
   return allowed.length ? allowed.join("; ") : undefined;
+}
+
+const installerApps = new Set(["vietcode", "claude-code", "codex", "openclaw", "opencode", "hermes"]);
+
+function publicAccessOrigin(req: Request): string {
+  // Set PUBLIC_APP_ORIGIN only when you want to pin a canonical public domain. Otherwise the current request origin is used automatically.
+  const configured = process.env.PUBLIC_APP_ORIGIN?.trim();
+  if (configured && /^https?:\/\/[^\s/?#]+$/i.test(configured)) return configured.replace(/\/+$/, "");
+
+  // The app trusts exactly one reverse-proxy hop. Validate Host before
+  // reflecting it into an installer script to avoid header-injection output.
+  const host = req.get("host")?.trim();
+  if (!host || !/^[a-z0-9.-]+(?::\d{1,5})?$/i.test(host)) {
+    throw new Error("A valid public host is required for the installer");
+  }
+  return `${req.protocol === "https" ? "https" : "http"}://${host}`;
+}
+
+function rewriteInstaller(text: string, origin: string): string {
+  return text
+    .replaceAll("https://api.miraiapi.com/api/mirai/install", `${origin}/api/access/install`)
+    .replaceAll("https://api.miraiapi.com/v1", `${origin}/v1`)
+    .replaceAll("https://api.miraiapi.com", origin);
 }
 
 function hslToHex(h: number, s: number, l: number): string {
@@ -2199,18 +2222,18 @@ export async function registerRoutes(
     }
   });
 
-  app.all("/api/access/v1/*", async (req, res) => {
+  const forwardCustomerApi = async (req: Request, res: Response, routePrefix: RegExp, upstreamRequest = forwardAccessApi) => {
     const controller = new AbortController();
     res.on("close", () => {
       if (!res.writableEnded) controller.abort();
     });
     try {
-      const upstreamPath = req.originalUrl.replace(/^\/api\/access\/v1/, "") || "/";
+      const upstreamPath = req.originalUrl.replace(routePrefix, "") || "/";
       const headers: Record<string, string> = {};
       if (typeof req.headers.authorization === "string") headers.Authorization = req.headers.authorization;
       if (typeof req.headers["content-type"] === "string") headers["Content-Type"] = req.headers["content-type"];
       const hasBody = !["GET", "HEAD"].includes(req.method) && req.body !== undefined;
-      const upstream = await forwardAccessApi(upstreamPath, {
+      const upstream = await upstreamRequest(upstreamPath, {
         method: req.method,
         headers,
         body: hasBody ? JSON.stringify(req.body) : undefined,
@@ -2227,9 +2250,7 @@ export async function registerRoutes(
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (!res.write(Buffer.from(value))) {
-            await new Promise<void>(resolve => res.once("drain", resolve));
-          }
+          if (!res.write(Buffer.from(value))) await new Promise<void>(resolve => res.once("drain", resolve));
         }
         res.end();
       } finally {
@@ -2239,7 +2260,33 @@ export async function registerRoutes(
       if (!res.headersSent) res.status(502).json({ error: "Access service is temporarily unavailable" });
       else res.end();
     }
+  };
+
+  // Public, BuyBit-branded OpenAI-compatible gateway. Keep the legacy path
+  // for existing customers that previously copied its configuration.
+  app.all("/v1/*", (req, res) => forwardCustomerApi(req, res, /^\/v1/));
+  // Claude-compatible clients append /v1/messages to this base URL. Stripping
+  // /anthropic preserves that path for the same authenticated upstream.
+  app.all("/anthropic/*", (req, res) => forwardCustomerApi(req, res, /^\/anthropic/, forwardAnthropicAccessApi));
+  app.all("/api/access/v1/*", (req, res) => forwardCustomerApi(req, res, /^\/api\/access\/v1/));
+
+  app.get("/api/access/install/:app", async (req, res) => {
+    const appName = req.params.app.toLowerCase();
+    if (!installerApps.has(appName)) return res.status(404).type("text/plain").send("Installer not found");
+    try {
+      const query = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+      const upstream = await forwardAccessInstaller(appName, query);
+      if (!upstream.ok) return res.status(upstream.status).type("text/plain").send("Installer is temporarily unavailable");
+      const content = await upstream.text();
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "text/plain; charset=utf-8");
+      res.send(rewriteInstaller(content, publicAccessOrigin(req)));
+    } catch (error) {
+      console.error("Access installer proxy failed:", error);
+      res.status(502).type("text/plain").send("Installer is temporarily unavailable");
+    }
   });
+
   // Theme settings endpoints (GET is public for visitors to see theme, POST is admin-only)
   app.get("/api/settings/theme", async (req, res) => {
     try {

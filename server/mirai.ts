@@ -108,6 +108,34 @@ export async function forwardAccessApi(path: string, init: RequestInit = {}) {
   return response;
 }
 
+// Claude-compatible clients use a root base URL and send /v1/messages.
+// Keep that path intact instead of adding the OpenAI /v1 prefix twice.
+export async function forwardAnthropicAccessApi(path: string, init: RequestInit = {}) {
+  return fetch(`https://api.miraiapi.com${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Store-Access-Proxy/1.0",
+      ...(init.headers || {}),
+    },
+    signal: init.signal || AbortSignal.timeout(60000),
+  });
+}
+
+/**
+ * Fetches an approved upstream installer so the storefront can serve it from
+ * its own domain after substituting the public API gateway URL.
+ */
+export async function forwardAccessInstaller(app: string, query: string) {
+  return fetch(`${MIRAI_PUBLIC_API_URL}/mirai/install/${encodeURIComponent(app)}${query}`, {
+    headers: {
+      Accept: "text/plain, text/x-shellscript, application/octet-stream;q=0.8, */*;q=0.5",
+      "User-Agent": "Store-Access-Installer-Proxy/1.0",
+    },
+    signal: AbortSignal.timeout(30000),
+  });
+}
+
 export async function getMiraiBalance() {
   return request<{ balance_vnd: number; discount_bps?: number; tier?: string }>("/balance");
 }
