@@ -271,10 +271,10 @@ export default function Admin() {
   });
 
   return (
-    <div className="min-h-screen min-w-0 max-w-full overflow-x-hidden bg-background">
+    <div className="min-h-screen bg-background">
       <Header searchQuery="" onSearchChange={() => {}} showSearch={false} />
 
-      <main className="container mx-auto min-w-0 max-w-full overflow-x-hidden px-4 py-6 md:px-6">
+      <main className="container mx-auto px-4 py-6 md:px-6">
         <div className="flex flex-col gap-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -287,7 +287,7 @@ export default function Admin() {
             </div>
           </div>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 overflow-x-hidden">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             {/* Mobile: Dropdown selector */}
             <div className="xl:hidden mb-4">
               <Select value={activeTab} onValueChange={setActiveTab}>
@@ -323,8 +323,8 @@ export default function Admin() {
             </div>
 
             {/* Desktop: Regular tabs */}
-            <div className="hidden xl:block mb-4 min-w-0 max-w-full overflow-hidden" aria-label="Admin sections">
-              <TabsList className="!flex h-auto !w-full !flex-wrap justify-start gap-1 p-1 bg-muted/50">
+            <div className="hidden xl:block mb-4 max-w-full" aria-label="Admin sections">
+              <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 p-1 bg-muted/50">
                 {adminTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
