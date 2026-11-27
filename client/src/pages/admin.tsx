@@ -289,7 +289,7 @@ export default function Admin() {
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             {/* Mobile: Dropdown selector */}
-            <div className="sm:hidden mb-4">
+            <div className="xl:hidden mb-4">
               <Select value={activeTab} onValueChange={setActiveTab}>
                 <SelectTrigger className="w-full" data-testid="select-admin-tab-mobile">
                   <SelectValue>
