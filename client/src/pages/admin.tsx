@@ -17,7 +17,7 @@ import { ShopSettings } from "@/components/admin/shop-settings";
 import { SmtpSettings } from "@/components/admin/smtp-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Package, DollarSign, BarChart3, Settings, ShoppingBag, ClipboardList, CheckCircle2, Clock, Mail, TrendingUp, Calendar, CalendarDays, Users, Database, Loader2, MessageCircle, Download, Bot, Images, Link2 } from "lucide-react";
@@ -288,10 +288,10 @@ export default function Admin() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            {/* Mobile: Dropdown selector */}
-            <div className="xl:hidden mb-4">
+            {/* Admin section selector: use one compact control at every screen size. */}
+            <div className="mb-4">
               <Select value={activeTab} onValueChange={setActiveTab}>
-                <SelectTrigger className="w-full" data-testid="select-admin-tab-mobile">
+                <SelectTrigger className="w-full" data-testid="select-admin-tab">
                   <SelectValue>
                     {(() => {
                       const tab = adminTabs.find(t => t.value === activeTab);
@@ -320,29 +320,6 @@ export default function Admin() {
                   })}
                 </SelectContent>
               </Select>
-            </div>
-
-            {/* Desktop: Regular tabs */}
-            <div className="hidden xl:block mb-4 max-w-full" aria-label="Admin sections">
-              <TabsList
-                className="!grid h-10 w-full gap-0 overflow-hidden p-1 bg-muted/50"
-                style={{ gridTemplateColumns: `repeat(${adminTabs.length}, minmax(0, 1fr))` }}
-              >
-                {adminTabs.map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <TabsTrigger 
-                      key={tab.value}
-                      value={tab.value} 
-                      className="min-w-0 w-full gap-1 overflow-hidden px-1 py-1.5 text-xs whitespace-nowrap data-[state=active]:bg-background"
-                      data-testid={`tab-${tab.value}`}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{tab.label}</span>
-                    </TabsTrigger>
-                  );
-                })}
-              </TabsList>
             </div>
 
             <TabsContent value="statistics">
