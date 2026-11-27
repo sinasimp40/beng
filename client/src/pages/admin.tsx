@@ -289,7 +289,7 @@ export default function Admin() {
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 overflow-x-hidden">
             {/* Mobile: Dropdown selector */}
-            <div className="min-[1700px]:hidden mb-4">
+            <div className="xl:hidden mb-4">
               <Select value={activeTab} onValueChange={setActiveTab}>
                 <SelectTrigger className="w-full" data-testid="select-admin-tab-mobile">
                   <SelectValue>
@@ -323,7 +323,7 @@ export default function Admin() {
             </div>
 
             {/* Desktop: Regular tabs */}
-            <div className="hidden min-[1700px]:block mb-4 min-w-0 max-w-full overflow-hidden" aria-label="Admin sections">
+            <div className="hidden xl:block mb-4 min-w-0 max-w-full overflow-hidden" aria-label="Admin sections">
               <TabsList className="!flex h-auto !w-full !flex-wrap justify-start gap-1 p-1 bg-muted/50">
                 {adminTabs.map((tab) => {
                   const Icon = tab.icon;

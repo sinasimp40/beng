@@ -294,7 +294,83 @@ export function DatabaseSettings() {
   };
 
   return (
-    <div className="space-y-6">`r`n      <Card className="bg-card border-card-border">
+    <div className="space-y-6">
+      <Card className="bg-card border-card-border">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-5 h-5 text-primary" />
+            Database Export / Import
+          </CardTitle>
+          <CardDescription>
+            Export your database as JSON or import from a backup file
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {progress && (
+            <div className="space-y-2 p-4 bg-background/50 rounded-lg border border-border">
+              <div className="flex items-center gap-2">
+                {getPhaseIcon(progress.phase)}
+                <span className="text-sm font-medium">{progress.message}</span>
+                {progress.phase !== "completed" && progress.phase !== "error" && (
+                  <Badge variant="outline" className="ml-auto">
+                    {progress.percent}%
+                  </Badge>
+                )}
+              </div>
+              <Progress value={progress.percent} className="h-2" />
+              {progress.tableName && (
+                <p className="text-xs text-muted-foreground">
+                  Table: {progress.tableName}
+                  {progress.totalRows && ` (${progress.processedRows}/${progress.totalRows} rows)`}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-4">
+            <Button
+              onClick={handleExport}
+              disabled={isExporting || isImporting}
+              className="gap-2"
+              data-testid="button-export-database"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              Export Database (JSON)
+            </Button>
+
+            <div>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImport}
+                accept=".json"
+                className="hidden"
+                data-testid="input-import-file"
+              />
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isExporting || isImporting}
+                className="gap-2"
+                data-testid="button-import-database"
+              >
+                {isImporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4" />
+                )}
+                Import from JSON
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-card border-card-border">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Send className="w-5 h-5 text-primary" />
