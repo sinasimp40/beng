@@ -323,8 +323,8 @@ export default function Admin() {
             </div>
 
             {/* Desktop: Regular tabs */}
-            <div className="hidden sm:block mb-4">
-              <TabsList className="inline-flex gap-1 p-1 bg-muted/50">
+            <div className="hidden xl:block mb-4 max-w-full overflow-x-auto overscroll-x-contain pb-1" aria-label="Admin sections">
+              <TabsList className="w-max gap-1 p-1 bg-muted/50">
                 {adminTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
