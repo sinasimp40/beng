@@ -324,18 +324,21 @@ export default function Admin() {
 
             {/* Desktop: Regular tabs */}
             <div className="hidden xl:block mb-4 max-w-full" aria-label="Admin sections">
-              <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 p-1 bg-muted/50">
+              <TabsList
+                className="!grid h-10 w-full gap-0 overflow-hidden p-1 bg-muted/50"
+                style={{ gridTemplateColumns: `repeat(${adminTabs.length}, minmax(0, 1fr))` }}
+              >
                 {adminTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
                     <TabsTrigger 
                       key={tab.value}
                       value={tab.value} 
-                      className="gap-1 px-2 py-1.5 text-sm data-[state=active]:bg-background"
+                      className="min-w-0 w-full gap-1 overflow-hidden px-1 py-1.5 text-xs whitespace-nowrap data-[state=active]:bg-background"
                       data-testid={`tab-${tab.value}`}
                     >
-                      <Icon className="w-4 h-4 shrink-0" />
-                      {tab.label}
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{tab.label}</span>
                     </TabsTrigger>
                   );
                 })}
