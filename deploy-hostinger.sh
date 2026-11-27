@@ -177,7 +177,8 @@ fi
 echo -e "\n${GREEN}[7/11] Setting up application...${NC}"
 
 # Create app directory if not exists
-mkdir -p $APP_DIR
+mkdir -p "$APP_DIR"
+mkdir -p "$APP_DIR/uploads"
 
 # Check if we're in a git repo and copy files
 if [[ -d ".git" ]]; then
@@ -201,6 +202,7 @@ NODE_ENV=production
 
 # Domain (used for callbacks)
 DOMAIN=https://$DOMAIN
+UPLOADS_DIR=/var/www/beng/uploads
 EOF
 
 echo -e "${GREEN}.env file created!${NC}"
@@ -392,7 +394,8 @@ module.exports = {
       NODE_ENV: 'production',
       PORT: $APP_PORT,
       DATABASE_URL: '$DATABASE_URL',
-      DOMAIN: 'https://$DOMAIN'
+      DOMAIN: 'https://$DOMAIN',
+      UPLOADS_DIR: '/var/www/beng/uploads'
     }
   }]
 };

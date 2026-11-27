@@ -9,3 +9,4 @@ CREDENTIALS.txt
 .env
 .env.*
 !.env.example
+uploads

@@ -7,6 +7,7 @@ import { storage } from "./storage";
 import { emailService } from "./email";
 import { initializeEncryption } from "./services/databaseBackupService";
 import { setupSecurity } from "./security";
+import { ensureUploadDir, getUploadDir } from "./imageStorage";
 
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] Uncaught exception:", err);
@@ -17,6 +18,9 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const app = express();
+
+void ensureUploadDir();
+app.use("/uploads", express.static(getUploadDir(), { maxAge: "7d", immutable: false }));
 
 // Trust ONLY the first hop (Replit / Nginx). Setting this to `true` would
 // trust any client-supplied X-Forwarded-For header, letting attackers spoof

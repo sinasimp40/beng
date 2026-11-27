@@ -17,6 +17,7 @@ import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint
 import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, forwardAnthropicAccessApi, forwardAccessInstaller, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, miraiPackageStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
 import type { Order } from "@shared/schema";
 import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, recordSuccessfulLogin } from "./security";
+import { deleteUploadedImage, isGeneratedImageName, listUploadedImages, saveUploadedImage } from "./imageStorage";
 
 const usageCookieNames = new Set<string>();
 
@@ -2092,6 +2093,26 @@ export async function registerRoutes(
     }
   });
 
+  // Hosted image library. Files are kept in /uploads outside the build output.
+  app.get("/api/admin/images", requireAdmin, async (_req, res) => {
+    try { res.json(await listUploadedImages()); } catch (error) { console.error("Image list failed:", error); res.status(500).json({ error: "Could not load image library" }); }
+  });
+  app.post("/api/admin/images", requireAdmin, async (req, res) => {
+    try {
+      const input = z.object({ dataUrl: z.string().min(32).max(8_000_000), fileName: z.string().max(255).optional() }).parse(req.body);
+      res.status(201).json(await saveUploadedImage(input.dataUrl));
+    } catch (error: any) { res.status(error instanceof z.ZodError ? 400 : 400).json({ error: error.message || "Image upload failed" }); }
+  });
+  app.delete("/api/admin/images/:name", requireAdmin, async (req, res) => {
+    try {
+      const name = req.params.name;
+      if (!isGeneratedImageName(name)) return res.status(400).json({ error: "Invalid image name" });
+      const inUse = (await storage.getAllProducts()).some(product => product.imageUrl === `/uploads/${name}`);
+      if (inUse) return res.status(409).json({ error: "This image is currently used by a product. Change that product image before deleting it." });
+      await deleteUploadedImage(name);
+      res.status(204).send();
+    } catch (error: any) { res.status(error?.code === "ENOENT" ? 404 : 500).json({ error: error?.code === "ENOENT" ? "Image not found" : "Could not delete image" }); }
+  });
   // Mirai reseller settings and catalog synchronization. The credential is
   // stored encrypted and is never returned to the browser.
   app.get("/api/admin/mirai", requireAdmin, async (_req, res) => {

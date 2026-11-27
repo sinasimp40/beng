@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -28,9 +28,10 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CountryFlag } from "@/components/country-flag";
-import { Save, X, Search, Check, Flame, Eye, EyeOff } from "lucide-react";
+import { Save, X, Search, Check, Flame, Eye, EyeOff, ImagePlus, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { uploadImageFile } from "@/lib/image-upload";
 
 const productFormSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
@@ -40,7 +41,7 @@ const productFormSchema = z.object({
   category: z.string().optional().default(""),
   customCategory: z.string().optional().default(""),
   stock: z.coerce.number().int().min(0, "Stock must be 0 or more"),
-  imageUrl: z.string().url().optional().or(z.literal("")),
+  imageUrl: z.string().trim().max(2048).optional().default("").refine(value => !value || /^https?:\/\/[^\s]+$/i.test(value) || /^\/uploads\/[0-9a-f-]{36}\.(?:png|jpe?g|webp|gif)$/i.test(value), "Enter a valid image URL or upload an image"),
   countries: z.array(z.string()).optional().default([]),
   stockList: z.string().optional(),
   enabled: z.boolean().default(true),
@@ -65,6 +66,9 @@ export function ProductForm({
   isCreate,
 }: ProductFormProps) {
   const [countrySearch, setCountrySearch] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState("");
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const isCustomCategory = product?.category && !CATEGORIES.includes(product.category as any);
   const isMiraiManagedProduct = product?.fulfillmentProvider === "mirai" && Boolean(product.providerPackageCode);
   const hasVariants = Boolean(product?.variants?.length);
@@ -88,7 +92,23 @@ export function ProductForm({
   });
 
   const stockList = form.watch("stockList");
+  const imageUrl = form.watch("imageUrl");
   const calculatedStock = stockList?.split('\n').filter(line => line.trim() !== '').length || 0;
+
+  const handleImageUpload = async (file?: File) => {
+    if (!file) return;
+    setUploadingImage(true);
+    setImageUploadError("");
+    try {
+      const image = await uploadImageFile(file);
+      form.setValue("imageUrl", image.url, { shouldDirty: true, shouldValidate: true });
+    } catch (error) {
+      setImageUploadError(error instanceof Error ? error.message : "Could not upload image");
+    } finally {
+      setUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
 
   const handleSubmit = (data: ProductFormData) => {
     if (hasVariants && !data.variantGroupTitle?.trim()) {
@@ -203,14 +223,24 @@ export function ProductForm({
               name="imageUrl"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Image URL (optional)</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="https://example.com/image.png"
-                      {...field}
-                      data-testid="input-product-image"
-                    />
-                  </FormControl>
+                                    <FormLabel>Product image (optional)</FormLabel>
+                  <div className="flex gap-2">
+                    <FormControl>
+                      <Input
+                        placeholder="https://example.com/image.png or /uploads/..."
+                        {...field}
+                        data-testid="input-product-image"
+                      />
+                    </FormControl>
+                    <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={event => void handleImageUpload(event.target.files?.[0])} />
+                    <Button type="button" variant="outline" className="shrink-0 gap-2" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage}>
+                      {uploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                      {uploadingImage ? "Uploading" : "Upload"}
+                    </Button>
+                  </div>
+                  {imageUploadError && <p className="text-xs text-destructive">{imageUploadError}</p>}
+                  {imageUrl && <div className="mt-3 flex items-center gap-3 rounded-lg border bg-muted/30 p-3"><img src={imageUrl} alt="Product preview" className="h-16 w-16 rounded-md object-contain bg-white" /><p className="min-w-0 break-all text-xs text-muted-foreground">{imageUrl}</p></div>}
+                  <p className="text-xs text-muted-foreground">External URLs are supported, or upload an image to host it on your site.</p>
                   <FormMessage />
                 </FormItem>
               )}
