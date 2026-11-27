@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,10 +21,52 @@ const periodCards = [
 
 export function ReferralLinks() {
   const { toast } = useToast();
+  const { token } = useAuth();
+  const referralSocket = useRef<WebSocket | null>(null);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempts = useRef(0);
   const [label, setLabel] = useState("");
   const [destination, setDestination] = useState("/");
   const { data: referrals = [], isLoading, isError } = useQuery<Referral[]>({ queryKey: ["/api/admin/referrals"], refetchInterval: 30_000 });
   const totals = useMemo(() => referrals.reduce((out, link) => ({ daily: out.daily + Number(link.daily || 0), weekly: out.weekly + Number(link.weekly || 0), monthly: out.monthly + Number(link.monthly || 0), total: out.total + Number(link.total || 0) }), { daily: 0, weekly: 0, monthly: 0, total: 0 }), [referrals]);
+
+  useEffect(() => {
+    if (!token) return;
+    let disposed = false;
+    const connect = () => {
+      if (disposed || referralSocket.current?.readyState === WebSocket.OPEN) return;
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${window.location.host}/ws/referrals`, [token]);
+      referralSocket.current = socket;
+      socket.onopen = () => {
+        reconnectAttempts.current = 0;
+        void queryClient.invalidateQueries({ queryKey: ["/api/admin/referrals"] });
+      };
+      socket.onmessage = (event) => {
+        try {
+          if (JSON.parse(event.data).type === "referral_updated") {
+            void queryClient.invalidateQueries({ queryKey: ["/api/admin/referrals"] });
+          }
+        } catch {
+          // Ignore malformed real-time messages.
+        }
+      };
+      socket.onclose = () => {
+        if (referralSocket.current === socket) referralSocket.current = null;
+        if (disposed || reconnectAttempts.current >= 10) return;
+        const delay = Math.min(1000 * 2 ** reconnectAttempts.current, 30000);
+        reconnectAttempts.current += 1;
+        reconnectTimer.current = setTimeout(connect, delay);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      referralSocket.current?.close();
+      referralSocket.current = null;
+    };
+  }, [token]);
 
   const createMutation = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/admin/referrals", { label, destination }),
@@ -60,7 +103,7 @@ export function ReferralLinks() {
           <div className="space-y-2"><Label htmlFor="referral-destination">Destination path</Label><Input id="referral-destination" value={destination} onChange={event => setDestination(event.target.value)} placeholder="/ or /redeem-code" maxLength={500} /></div>
           <Button type="submit" disabled={!label.trim() || createMutation.isPending} className="gap-2">{createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Create link</Button>
         </form>
-        <p className="mt-3 text-xs text-muted-foreground">Only paths on this site are allowed as destinations. Counts are raw redirect visits, not unique people, and are refreshed every 30 seconds.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Only paths on this site are allowed as destinations. Counts are raw redirect visits, not unique people. Open Admin tabs update immediately when a tracked link is opened, with a 30-second fallback refresh.</p>
       </CardContent>
     </Card>
 

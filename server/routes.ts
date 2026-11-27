@@ -275,6 +275,8 @@ const productSubscribers = new Set<WebSocket>();
 const themeSubscribers = new Set<WebSocket>();
 // Store WebSocket clients for review updates
 const reviewSubscribers = new Set<WebSocket>();
+// Admin-only subscribers for immediate referral visit count updates.
+const referralSubscribers = new Set<WebSocket>();
 const statusSubscribers = new Set<WebSocket>();
 // Lock for processing completed orders (prevents duplicate email/stock consumption)
 const processingOrders = new Set<string>();
@@ -829,6 +831,13 @@ function broadcastProductUpdate(eventType: "product_created" | "product_updated"
 }
 
 // Broadcast review updates to all subscribers
+function broadcastReferralUpdate(referralLinkId?: string) {
+  const message = JSON.stringify({ type: "referral_updated", referralLinkId });
+  referralSubscribers.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(message);
+  });
+}
+
 function broadcastReviewUpdate(eventType: "review_created" | "review_updated" | "review_deleted", review: any) {
   const message = JSON.stringify({ type: eventType, review });
   reviewSubscribers.forEach((ws) => {
@@ -2120,6 +2129,7 @@ export async function registerRoutes(
       const destination = isSafeLocalDestination(link.destination) ? link.destination : "/";
       try {
         await db.insert(referralVisits).values({ referralLinkId: link.id, visitedAt: new Date().toISOString() });
+        broadcastReferralUpdate(link.id);
       } catch (error) {
         console.error("Referral visit logging failed:", error);
       }
@@ -3723,11 +3733,12 @@ export async function registerRoutes(
   const statusWss = new WebSocketServer({ noServer: true });
   const updateWss = new WebSocketServer({ noServer: true, handleProtocols: echoProto });
   const creditsWss = new WebSocketServer({ noServer: true, handleProtocols: echoProto });
+  const referralsWss = new WebSocketServer({ noServer: true, handleProtocols: echoProto });
 
   // Manual WebSocket upgrade router — only handle /ws/* paths, leave others for Vite HMR
   // Admin-only WS endpoints stream sensitive PII (orders, DB ops, update progress)
   // and MUST require a valid admin session token at handshake time.
-  const ADMIN_WS_PATHS = new Set(["/ws/orders", "/ws/database", "/ws/updates"]);
+  const ADMIN_WS_PATHS = new Set(["/ws/orders", "/ws/database", "/ws/updates", "/ws/referrals"]);
   const AUTH_WS_PATHS = new Set([...ADMIN_WS_PATHS, "/ws/credits"]);
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -3746,6 +3757,7 @@ export async function registerRoutes(
       "/ws/status": statusWss,
       "/ws/updates": updateWss,
       "/ws/credits": creditsWss,
+      "/ws/referrals": referralsWss,
     };
     const server = wsMap[pathname];
     if (!server) {
@@ -4007,6 +4019,13 @@ export async function registerRoutes(
     ws.on("error", () => {
       orderSubscribers.delete(ws);
     });
+  });
+
+  referralsWss.on("connection", (ws) => {
+    referralSubscribers.add(ws);
+    const cleanup = () => referralSubscribers.delete(ws);
+    ws.on("close", cleanup);
+    ws.on("error", cleanup);
   });
 
   creditsWss.on("connection", (ws) => {
