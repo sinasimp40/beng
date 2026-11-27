@@ -45,7 +45,7 @@ const adminTabs = [
   { value: "credits", label: "Credit logs", icon: DollarSign },
   { value: "reviews", label: "Reviews", icon: Star },
   { value: "images", label: "Images", icon: Images },
-  { value: "referrals", label: "Referral links", icon: Link2 },
+  { value: "referrals", label: "Link", icon: Link2 },
   { value: "settings", label: "Settings", icon: Settings },
   { value: "mirai", label: "Mirai", icon: Bot },
   { value: "theme", label: "Theme", icon: Palette },
@@ -331,7 +331,7 @@ export default function Admin() {
                     <TabsTrigger 
                       key={tab.value}
                       value={tab.value} 
-                      className="gap-2 px-3 py-1.5 text-sm data-[state=active]:bg-background" 
+                      className="gap-1 px-2 py-1.5 text-sm data-[state=active]:bg-background"
                       data-testid={`tab-${tab.value}`}
                     >
                       <Icon className="w-4 h-4 shrink-0" />
