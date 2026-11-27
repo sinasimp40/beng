@@ -464,6 +464,22 @@ export const insertEmailTemplateSchema = createInsertSchema(emailTemplates).omit
 export type InsertEmailTemplate = z.infer<typeof insertEmailTemplateSchema>;
 export type EmailTemplate = typeof emailTemplates.$inferSelect;
 
+// Trackable referral links. Visits record only the link and timestamp — no IP address or device fingerprint is stored.
+export const referralLinks = pgTable("referral_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 32 }).notNull().unique(),
+  label: text("label").notNull(),
+  destination: text("destination").notNull().default("/"),
+  enabled: integer("enabled").notNull().default(1),
+  createdAt: text("created_at").notNull().default(sql`now()`),
+});
+export const referralVisits = pgTable("referral_visits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  referralLinkId: varchar("referral_link_id").notNull().references(() => referralLinks.id, { onDelete: "cascade" }),
+  visitedAt: text("visited_at").notNull().default(sql`now()`),
+});
+export type ReferralLink = typeof referralLinks.$inferSelect;
+export type ReferralVisit = typeof referralVisits.$inferSelect;
 // Settings table for app configuration
 export const settings = pgTable("settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

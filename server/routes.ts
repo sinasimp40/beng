@@ -1,10 +1,12 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { InsufficientStockError, storage } from "./storage";
-import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema, type CreditTransaction } from "@shared/schema";
+import { db } from "./db";
+import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema, type CreditTransaction, referralLinks, referralVisits } from "@shared/schema";
 import { z } from "zod";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { nowPaymentsService } from "./nowpayments";
 import { PAYMENT_CURRENCIES } from "@shared/payment-currencies";
 import { emailService } from "./email";
@@ -20,6 +22,21 @@ import { authLimiter, paymentLimiter, checkBruteForce, recordFailedLogin, record
 import { deleteUploadedImage, isGeneratedImageName, listUploadedImages, saveUploadedImage } from "./imageStorage";
 
 const usageCookieNames = new Set<string>();
+
+function isSafeLocalDestination(value: string): boolean {
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\") && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function getManilaPeriodBoundaries(now = new Date()) {
+  const offsetMs = 8 * 60 * 60 * 1000;
+  const manilaDate = new Date(now.getTime() + offsetMs);
+  const manilaMidnightUtc = Date.UTC(manilaDate.getUTCFullYear(), manilaDate.getUTCMonth(), manilaDate.getUTCDate());
+  const dayStart = new Date(manilaMidnightUtc - offsetMs);
+  const mondayOffset = (new Date(manilaMidnightUtc).getUTCDay() + 6) % 7;
+  const weekStart = new Date(manilaMidnightUtc - mondayOffset * 24 * 60 * 60 * 1000 - offsetMs);
+  const monthStart = new Date(Date.UTC(manilaDate.getUTCFullYear(), manilaDate.getUTCMonth(), 1) - offsetMs);
+  return { day: dayStart.toISOString(), week: weekStart.toISOString(), month: monthStart.toISOString() };
+}
 
 function forwardUsageSessionCookie(upstream: globalThis.Response, res: import("express").Response) {
   const cookies = typeof upstream.headers.getSetCookie === "function" ? upstream.headers.getSetCookie() : [upstream.headers.get("set-cookie")].filter((value): value is string => Boolean(value));
@@ -2093,6 +2110,56 @@ export async function registerRoutes(
     }
   });
 
+  // Referral links record redirect visits without retaining visitor IP addresses or device fingerprints.
+  app.get("/r/:code", async (req, res) => {
+    const parsedCode = z.string().regex(/^[A-Za-z0-9_-]{6,32}$/).safeParse(req.params.code);
+    if (!parsedCode.success) return res.status(404).send("Referral link not found");
+    try {
+      const [link] = await db.select().from(referralLinks).where(and(eq(referralLinks.code, parsedCode.data), eq(referralLinks.enabled, 1))).limit(1);
+      if (!link) return res.status(404).send("Referral link not found");
+      const destination = isSafeLocalDestination(link.destination) ? link.destination : "/";
+      try {
+        await db.insert(referralVisits).values({ referralLinkId: link.id, visitedAt: new Date().toISOString() });
+      } catch (error) {
+        console.error("Referral visit logging failed:", error);
+      }
+      return res.redirect(302, destination);
+    } catch (error) {
+      console.error("Referral redirect lookup failed:", error);
+      return res.status(503).send("Referral link is temporarily unavailable");
+    }
+  });
+
+  app.get("/api/admin/referrals", requireAdmin, async (_req, res) => {
+    try {
+      const { day, week, month } = getManilaPeriodBoundaries();
+      const rows = await db.select({ id: referralLinks.id, code: referralLinks.code, label: referralLinks.label, destination: referralLinks.destination, enabled: referralLinks.enabled, createdAt: referralLinks.createdAt, total: sql<number>`count(${referralVisits.id})::int`, daily: sql<number>`count(${referralVisits.id}) filter (where ${referralVisits.visitedAt} >= ${day})::int`, weekly: sql<number>`count(${referralVisits.id}) filter (where ${referralVisits.visitedAt} >= ${week})::int`, monthly: sql<number>`count(${referralVisits.id}) filter (where ${referralVisits.visitedAt} >= ${month})::int` }).from(referralLinks).leftJoin(referralVisits, eq(referralVisits.referralLinkId, referralLinks.id)).groupBy(referralLinks.id).orderBy(desc(referralLinks.createdAt));
+      res.json(rows);
+    } catch (error) { console.error("Referral list failed:", error); res.status(500).json({ error: "Could not load referral links" }); }
+  });
+  app.post("/api/admin/referrals", requireAdmin, async (req, res) => {
+    try {
+      const input = z.object({ label: z.string().trim().min(1).max(120), destination: z.string().trim().max(500).optional().default("/") }).parse(req.body);
+      if (!isSafeLocalDestination(input.destination)) return res.status(400).json({ error: "Destination must be a safe path on this site, such as / or /redeem-code" });
+      const destination = input.destination;
+      const code = randomBytes(6).toString("base64url");
+      const [link] = await db.insert(referralLinks).values({ code, label: input.label, destination, createdAt: new Date().toISOString() }).returning();
+      res.status(201).json({ ...link, total: 0, daily: 0, weekly: 0, monthly: 0 });
+    } catch (error: any) { res.status(error instanceof z.ZodError ? 400 : 500).json({ error: error instanceof z.ZodError ? error.errors[0]?.message : "Could not create referral link" }); }
+  });
+  app.patch("/api/admin/referrals/:id", requireAdmin, async (req, res) => {
+    try {
+      const input = z.object({ label: z.string().trim().min(1).max(120).optional(), destination: z.string().trim().max(500).optional(), enabled: z.boolean().optional() }).parse(req.body);
+      const updates: any = { ...input };
+      if (updates.destination !== undefined && !isSafeLocalDestination(updates.destination)) return res.status(400).json({ error: "Destination must be a safe path on this site, such as / or /redeem-code" });
+      const [link] = await db.update(referralLinks).set(updates).where(eq(referralLinks.id, req.params.id)).returning();
+      if (!link) return res.status(404).json({ error: "Referral link not found" });
+      res.json(link);
+    } catch (error: any) { res.status(error instanceof z.ZodError ? 400 : 500).json({ error: error instanceof z.ZodError ? error.errors[0]?.message : "Could not update referral link" }); }
+  });
+  app.delete("/api/admin/referrals/:id", requireAdmin, async (req, res) => {
+    try { const deleted = await db.delete(referralLinks).where(eq(referralLinks.id, req.params.id)).returning(); if (!deleted.length) return res.status(404).json({ error: "Referral link not found" }); res.status(204).send(); } catch { res.status(500).json({ error: "Could not delete referral link" }); }
+  });
   // Hosted image library. Files are kept in /uploads outside the build output.
   app.get("/api/admin/images", requireAdmin, async (_req, res) => {
     try { res.json(await listUploadedImages()); } catch (error) { console.error("Image list failed:", error); res.status(500).json({ error: "Could not load image library" }); }

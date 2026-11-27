@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Package, DollarSign, BarChart3, Settings, ShoppingBag, ClipboardList, CheckCircle2, Clock, Mail, TrendingUp, Calendar, CalendarDays, Users, Database, Loader2, MessageCircle, Download, Bot, Images } from "lucide-react";
+import { Plus, Package, DollarSign, BarChart3, Settings, ShoppingBag, ClipboardList, CheckCircle2, Clock, Mail, TrendingUp, Calendar, CalendarDays, Users, Database, Loader2, MessageCircle, Download, Bot, Images, Link2 } from "lucide-react";
 import { UsersTable } from "@/components/admin/users-table";
 import { CreditLogs } from "@/components/admin/credit-logs";
 import { useCreditUpdates } from "@/hooks/use-credit-updates";
@@ -31,6 +31,7 @@ import { ReviewsSettings } from "@/components/admin/reviews-settings";
 import { UpdateSettings } from "@/components/admin/update-settings";
 import { MiraiSettings } from "@/components/admin/mirai-settings";
 import { ImageLibrary } from "@/components/admin/image-library";
+import { ReferralLinks } from "@/components/admin/referral-links";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { Palette, Star } from "lucide-react";
 
@@ -44,6 +45,7 @@ const adminTabs = [
   { value: "credits", label: "Credit logs", icon: DollarSign },
   { value: "reviews", label: "Reviews", icon: Star },
   { value: "images", label: "Images", icon: Images },
+  { value: "referrals", label: "Referral links", icon: Link2 },
   { value: "settings", label: "Settings", icon: Settings },
   { value: "mirai", label: "Mirai", icon: Bot },
   { value: "theme", label: "Theme", icon: Palette },
@@ -731,6 +733,10 @@ export default function Admin() {
 
             <TabsContent value="images">
               <ImageLibrary />
+            </TabsContent>
+
+            <TabsContent value="referrals">
+              <ReferralLinks />
             </TabsContent>
 
             <TabsContent value="settings">
