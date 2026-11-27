@@ -70,30 +70,41 @@ export async function sendOrderNotification(
   }
 }
 
-export async function sendOrUpdateReferralDailyReport(
+export async function sendReferralVisitNotification(
   botToken: string,
   channelId: string,
-  text: string,
-  messageId?: number | null,
-): Promise<{ success: boolean; message: string; messageId?: number }> {
+  details: {
+    label: string;
+    code: string;
+    linkDailyVisits: number;
+    totalDailyVisits: number;
+    ipAddress: string;
+    country: string;
+  },
+): Promise<{ success: boolean; message: string }> {
   try {
-    const endpoint = messageId ? "editMessageText" : "sendMessage";
-    const body: Record<string, unknown> = { chat_id: channelId, text };
-    if (messageId) body.message_id = messageId;
-    const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/${endpoint}`, {
+    const clean = (value: string, fallback: string) => value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/[\r\n]+/g, " ").trim().slice(0, 160) || fallback;
+    const message = [
+      "🔗 NEW REFERRAL VISIT",
+      "━━━━━━━━━━━━━━━━━━━━━",
+      `Link: ${clean(details.label, "Unnamed link")}`,
+      `Code: ${clean(details.code, "Unknown")}`,
+      `Link visits today: ${Math.max(0, details.linkDailyVisits).toLocaleString()}`,
+      `Total visits today: ${Math.max(0, details.totalDailyVisits).toLocaleString()}`,
+      `IP: ${clean(details.ipAddress, "Unavailable")}`,
+      `Country: ${clean(details.country, "Unavailable")}`,
+    ].join("\n");
+    const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ chat_id: channelId, text: message }),
       signal: AbortSignal.timeout(20_000),
     });
-    const data = await response.json() as TelegramResponse & { result?: { message_id?: number } | boolean };
+    const data = await response.json() as TelegramResponse;
     if (!data.ok) {
-      const unchanged = messageId && /message is not modified/i.test(data.description || "");
-      if (unchanged) return { success: true, message: "Referral daily report already current", messageId };
       return { success: false, message: `Failed: ${data.description || "Telegram request failed"}` };
     }
-    const returnedId = typeof data.result === "object" && data.result ? data.result.message_id : undefined;
-    return { success: true, message: "Referral daily report updated", messageId: returnedId || messageId || undefined };
+    return { success: true, message: "Referral visit notification sent" };
   } catch (error) {
     return { success: false, message: `Error: ${(error as Error).message}` };
   }

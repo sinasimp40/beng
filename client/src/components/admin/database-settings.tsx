@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Database, Download, Upload, Send, Clock, CheckCircle2, AlertCircle, Loader2, ShieldAlert, HardDriveDownload } from "lucide-react";
+import { Database, Download, Upload, Send, Clock, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import type { BackupProgress, DatabaseBackupSettings } from "@shared/schema";
 
 export function DatabaseSettings() {
@@ -24,7 +24,6 @@ export function DatabaseSettings() {
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
   const [progress, setProgress] = useState<BackupProgress | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [isNativeExporting, setIsNativeExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,10 +33,7 @@ export function DatabaseSettings() {
     queryKey: ["/api/database/settings"],
   });
 
-  const { data: nativeBackupStatus, isLoading: isLoadingNativeBackupStatus } = useQuery<{ available: boolean; version?: string }>({
-    queryKey: ["/api/database/native-backup/status"],
-    retry: false,
-  });
+
   useEffect(() => {
     if (settings?.settings) {
       setTelegramBotToken(settings.settings.telegramBotToken || "");
@@ -150,30 +146,6 @@ export function DatabaseSettings() {
     }
   };
 
-  const handleNativeExport = async (format: "sql" | "dump") => {
-    setIsNativeExporting(true);
-    try {
-      const token = localStorage.getItem("buybit_auth_token");
-      const response = await fetch(`/api/database/export/${format === "sql" ? "sql" : "pgdump"}`, { method: "POST", credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!response.ok) {
-        const errorText = await response.text();
-        const { parseErrorMessage } = await import("@/lib/queryClient");
-        throw new Error(parseErrorMessage(errorText, "Native backup failed"));
-      }
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `buybit-postgres-${new Date().toISOString().slice(0, 10)}.${format}`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(url);
-      toast({ title: "Backup downloaded", description: `PostgreSQL ${format === "sql" ? "SQL" : "archive"} backup downloaded.` });
-    } catch (error) {
-      toast({ title: "Native backup failed", description: (error as Error).message, variant: "destructive" });
-    } finally { setIsNativeExporting(false); }
-  };
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -322,119 +294,7 @@ export function DatabaseSettings() {
   };
 
   return (
-    <div className="space-y-6">
-      <Card className="bg-card border-card-border">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="w-5 h-5 text-primary" />
-            Database Export / Import
-          </CardTitle>
-          <CardDescription>
-            Export your database as JSON or import from a backup file
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {progress && (
-            <div className="space-y-2 p-4 bg-background/50 rounded-lg border border-border">
-              <div className="flex items-center gap-2">
-                {getPhaseIcon(progress.phase)}
-                <span className="text-sm font-medium">{progress.message}</span>
-                {progress.phase !== "completed" && progress.phase !== "error" && (
-                  <Badge variant="outline" className="ml-auto">
-                    {progress.percent}%
-                  </Badge>
-                )}
-              </div>
-              <Progress value={progress.percent} className="h-2" />
-              {progress.tableName && (
-                <p className="text-xs text-muted-foreground">
-                  Table: {progress.tableName}
-                  {progress.totalRows && ` (${progress.processedRows}/${progress.totalRows} rows)`}
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-4">
-            <Button
-              onClick={handleExport}
-              disabled={isExporting || isImporting}
-              className="gap-2"
-              data-testid="button-export-database"
-            >
-              {isExporting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Download className="w-4 h-4" />
-              )}
-              Export Database (JSON)
-            </Button>
-
-            <div>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleImport}
-                accept=".json"
-                className="hidden"
-                data-testid="input-import-file"
-              />
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isExporting || isImporting}
-                className="gap-2"
-                data-testid="button-import-database"
-              >
-                {isImporting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4" />
-                )}
-                Import from JSON
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-card border-card-border">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <HardDriveDownload className="w-5 h-5 text-primary" />
-            Native PostgreSQL Backup
-          </CardTitle>
-                    <CardDescription>
-            Create a complete server-side pg_dump backup, separate from the JSON app-level backup.
-            {!isLoadingNativeBackupStatus && (nativeBackupStatus?.available ? ` ${nativeBackupStatus.version || "pg_dump is ready"}.` : " pg_dump is not available on this server.")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-            <div className="space-y-1 text-sm">
-              <p className="font-medium">Keep native backups private and encrypted.</p>
-              <p className="text-muted-foreground">They may contain customer/order records and encrypted settings. SQL/archive restore is intentionally not available in this browser because it can damage the live database.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={() => handleNativeExport("sql")} disabled={isNativeExporting || isExporting || isImporting || !nativeBackupStatus?.available} className="gap-2" data-testid="button-export-native-sql">
-              {isNativeExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download SQL (.sql)
-            </Button>
-            <Button variant="outline" onClick={() => handleNativeExport("dump")} disabled={isNativeExporting || isExporting || isImporting || !nativeBackupStatus?.available} className="gap-2" data-testid="button-export-native-dump">
-              {isNativeExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download PostgreSQL Archive (.dump)
-            </Button>
-          </div>
-          <div className="space-y-2 rounded-lg border border-border bg-background/40 p-4 text-sm">
-            <p className="font-medium">Restore on your VPS</p>
-            <p className="text-muted-foreground">First restore into a new temporary database and verify it. Do not test against your live database.</p>
-            <code className="block overflow-x-auto rounded bg-muted p-3 text-xs">psql "$DATABASE_URL" -f buybit-postgres-YYYY-MM-DD.sql</code>
-            <code className="block overflow-x-auto rounded bg-muted p-3 text-xs">pg_restore --no-owner --no-privileges --dbname="$DATABASE_URL" buybit-postgres-YYYY-MM-DD.dump</code>
-            <p className="text-xs text-muted-foreground">Use psql for .sql and pg_restore for .dump. For a clean recovery test, the target should be an empty temporary database.</p>
-          </div>
-        </CardContent>
-      </Card>
-      <Card className="bg-card border-card-border">
+    <div className="space-y-6">`r`n      <Card className="bg-card border-card-border">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Send className="w-5 h-5 text-primary" />

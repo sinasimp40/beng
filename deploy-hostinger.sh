@@ -127,10 +127,6 @@ else
     systemctl start postgresql
     systemctl enable postgresql
 fi
-# Admin native backups require pg_dump and pg_restore, including minimal VPS images.
-if ! command -v pg_dump &> /dev/null || ! command -v pg_restore &> /dev/null; then
-    apt install -y postgresql-client
-fi
 
 # Create database and user
 DB_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24)
