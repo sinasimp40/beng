@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createHash, randomBytes } from "node:crypto";
 import { InsufficientStockError, storage } from "./storage";
 import { db } from "./db";
-import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema, type CreditTransaction, referralLinks, referralVisits } from "@shared/schema";
+import { insertProductSchema, insertOrderSchema, insertEmailTemplateSchema, registerUserSchema, loginUserSchema, changePasswordSchema, adminUpdateUserSchema, type SafeUser, type BackupProgress, databaseBackupSettingsSchema, type CreditTransaction, referralLinks, referralVisits, referralDailyReports } from "@shared/schema";
 import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { nowPaymentsService } from "./nowpayments";
@@ -13,7 +13,8 @@ import { emailService } from "./email";
 import { creditStorage, CreditOperationError, InsufficientCreditError } from "./creditStorage";
 import { verifyRecaptcha, hashPassword, verifyPassword, generateSessionToken, needsRehash } from "./auth";
 import { exportDatabase, importDatabase, generateJobId, encryptToken, decryptToken, scheduleAutoBackup, initializeEncryption } from "./services/databaseBackupService";
-import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification } from "./services/telegramService";
+import { createNativeBackupProcess, getPgDumpStatus, type NativeBackupFormat } from "./services/postgresBackupService";
+import { testTelegramConnection, sendBackupToTelegram, sendOrderNotification, sendCreditTopupNotification, sendOrUpdateReferralDailyReport } from "./services/telegramService";
 import { clearThemeCache } from "./themeInjector";
 import { validateGitHubRepo, checkForUpdates, applyUpdate, verifyRepoFingerprint, generateRepoFingerprint, getLatestProgress, clearProgress } from "./services/updateService";
 import { checkAccessKey, clearMiraiApiKey, forwardAccessApi, forwardAnthropicAccessApi, forwardAccessInstaller, getMiraiBalance, getMiraiPackages, miraiCodes, miraiConfigured, newProviderIdempotencyKey, previewAccessCode, proxyPublicApi, providerCategory, providerDefaultPrice, providerDescription, providerProductName, miraiPackageStock, purchaseMiraiPackage, redeemAccessCode, renewAccessCode, saveMiraiApiKey, isMiraiProduct } from "./mirai";
@@ -36,6 +37,83 @@ function getManilaPeriodBoundaries(now = new Date()) {
   const weekStart = new Date(manilaMidnightUtc - mondayOffset * 24 * 60 * 60 * 1000 - offsetMs);
   const monthStart = new Date(Date.UTC(manilaDate.getUTCFullYear(), manilaDate.getUTCMonth(), 1) - offsetMs);
   return { day: dayStart.toISOString(), week: weekStart.toISOString(), month: monthStart.toISOString() };
+}
+
+function manilaReportDate(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+const referralReportTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const referralReportRuns = new Set<string>();
+const referralReportPending = new Set<string>();
+
+async function updateReferralTelegramDailyReport(reportDate: string): Promise<void> {
+  if (referralReportRuns.has(reportDate)) {
+    referralReportPending.add(reportDate);
+    return;
+  }
+  referralReportPending.delete(reportDate);
+  referralReportRuns.add(reportDate);
+  const { day } = getManilaPeriodBoundaries();
+  try {
+    const encryptedToken = await storage.getSetting("telegram_bot_token");
+    const channelId = await storage.getSetting("telegram_channel_id");
+    if (!encryptedToken || !channelId) return;
+    const botToken = decryptToken(encryptedToken);
+    if (!botToken) return;
+
+    await db.insert(referralDailyReports).values({ reportDate, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }).onConflictDoNothing({ target: referralDailyReports.reportDate });
+    const [report] = await db.select().from(referralDailyReports).where(eq(referralDailyReports.reportDate, reportDate)).limit(1);
+    if (!report) return;
+
+    const rows = await db.select({ label: referralLinks.label, code: referralLinks.code, visits: sql<number>`count(${referralVisits.id})::int` })
+      .from(referralLinks)
+      .leftJoin(referralVisits, and(eq(referralVisits.referralLinkId, referralLinks.id), sql`${referralVisits.visitedAt} >= ${day}`))
+      .groupBy(referralLinks.id)
+      .orderBy(desc(sql`count(${referralVisits.id})`));
+    const total = rows.reduce((sum, row) => sum + Number(row.visits || 0), 0);
+    const safe = (value: string) => value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 96) || "Untitled";
+    const lines = rows.filter(row => Number(row.visits || 0) > 0).map(row => `• ${safe(row.label)} (${safe(row.code)}): ${Number(row.visits).toLocaleString()}`);
+    const message = [
+      "🔗 REFERRAL VISITS — DAILY",
+      "━━━━━━━━━━━━━━━━━━━━━",
+      `Date: ${reportDate} (Manila time)`,
+      `Total visits: ${total.toLocaleString()}`,
+      "",
+      lines.length ? "By link:" : "No visits recorded yet.",
+      ...lines,
+      "━━━━━━━━━━━━━━━━━━━━━",
+      `Updated: ${new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "medium" })}`,
+    ].join("\n").slice(0, 4000);
+    const result = await sendOrUpdateReferralDailyReport(botToken, channelId, message, report.telegramMessageId);
+    if (result.success) {
+      await db.update(referralDailyReports).set({ telegramMessageId: result.messageId ?? report.telegramMessageId, lastError: null, updatedAt: new Date().toISOString() }).where(eq(referralDailyReports.id, report.id));
+    } else {
+      const lostMessage = Boolean(report.telegramMessageId) && /message to edit not found|message can.t be edited/i.test(result.message);
+      await db.update(referralDailyReports).set({ telegramMessageId: lostMessage ? null : report.telegramMessageId, lastError: result.message.slice(0, 1000), updatedAt: new Date().toISOString() }).where(eq(referralDailyReports.id, report.id));
+      if (lostMessage) referralReportPending.add(reportDate);
+      console.error("Referral Telegram daily report failed:", result.message);
+    }
+  } catch (error) {
+    console.error("Referral Telegram daily report error:", error);
+  } finally {
+    referralReportRuns.delete(reportDate);
+    if (referralReportPending.delete(reportDate)) scheduleReferralTelegramDailyReport();
+  }
+}
+
+function scheduleReferralTelegramDailyReport(): void {
+  const reportDate = manilaReportDate();
+  referralReportPending.add(reportDate);
+  const existing = referralReportTimers.get(reportDate);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    referralReportTimers.delete(reportDate);
+    void updateReferralTelegramDailyReport(reportDate);
+  }, 750);
+  referralReportTimers.set(reportDate, timer);
 }
 
 function forwardUsageSessionCookie(upstream: globalThis.Response, res: import("express").Response) {
@@ -2130,6 +2208,7 @@ export async function registerRoutes(
       try {
         await db.insert(referralVisits).values({ referralLinkId: link.id, visitedAt: new Date().toISOString() });
         broadcastReferralUpdate(link.id);
+        scheduleReferralTelegramDailyReport();
       } catch (error) {
         console.error("Referral visit logging failed:", error);
       }
@@ -3558,6 +3637,45 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/database/native-backup/status", requireAdmin, async (_req, res) => {
+    try {
+      res.json(await getPgDumpStatus());
+    } catch (error) {
+      console.error("Error checking pg_dump availability:", error);
+      res.status(500).json({ available: false });
+    }
+  });
+
+  const streamNativeDatabaseBackup = (format: NativeBackupFormat) => async (_req: Request, res: Response) => {
+    let backup: ReturnType<typeof createNativeBackupProcess>;
+    try {
+      backup = createNativeBackupProcess(format);
+    } catch (error: any) {
+      const busy = error?.message === "A native PostgreSQL backup is already running";
+      return res.status(busy ? 409 : 503).json({ error: busy ? error.message : "Native PostgreSQL backup could not be started. Check server PostgreSQL client tools." });
+    }
+    let stderr = "";
+    const finish = () => backup.release();
+    const stop = () => { if (!backup.child.killed) backup.child.kill("SIGTERM"); finish(); };
+    backup.child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-2000); });
+    backup.child.once("error", (error) => {
+      console.error("Native PostgreSQL backup process error:", error.message);
+      if (!res.headersSent) res.status(503).json({ error: "pg_dump is not available on this server. Install PostgreSQL client tools." });
+      else res.destroy(error);
+      finish();
+    });
+    backup.child.once("close", (code) => {
+      if (code !== 0 && code !== null) console.error("Native PostgreSQL backup failed:", stderr.replace(/[\r\n]+/g, " ").slice(0, 1000));
+      finish();
+    });
+    res.once("close", stop);
+    res.setHeader("Content-Type", backup.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${backup.filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    backup.child.stdout?.pipe(res);
+  };
+  app.post("/api/database/export/sql", requireAdmin, streamNativeDatabaseBackup("sql"));
+  app.post("/api/database/export/pgdump", requireAdmin, streamNativeDatabaseBackup("dump"));
   app.post("/api/database/export", requireAdmin, async (req, res) => {
     try {
       const jobId = generateJobId();

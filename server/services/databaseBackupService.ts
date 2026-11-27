@@ -1,5 +1,5 @@
 import { db, pool } from "../db";
-import { users, products, orders, orderItems, creditTopups, creditTransactions, creditTelegramEvents, emailTemplates, settings, passwordResetTokens, reviews, referralLinks, referralVisits } from "@shared/schema";
+import { users, products, orders, orderItems, creditTopups, creditTransactions, creditTelegramEvents, emailTemplates, settings, passwordResetTokens, reviews, referralLinks, referralVisits, referralDailyReports } from "@shared/schema";
 import type { BackupProgress, DatabaseExport } from "@shared/schema";
 import { WebSocket } from "ws";
 import crypto from "crypto";
@@ -19,6 +19,7 @@ const TABLES = [
   { name: 'reviews', table: reviews },
   { name: 'referralLinks', table: referralLinks },
   { name: 'referralVisits', table: referralVisits },
+  { name: 'referralDailyReports', table: referralDailyReports },
 ];
 
 const CHUNK_SIZE = 100;

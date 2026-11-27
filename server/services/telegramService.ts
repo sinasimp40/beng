@@ -70,6 +70,34 @@ export async function sendOrderNotification(
   }
 }
 
+export async function sendOrUpdateReferralDailyReport(
+  botToken: string,
+  channelId: string,
+  text: string,
+  messageId?: number | null,
+): Promise<{ success: boolean; message: string; messageId?: number }> {
+  try {
+    const endpoint = messageId ? "editMessageText" : "sendMessage";
+    const body: Record<string, unknown> = { chat_id: channelId, text };
+    if (messageId) body.message_id = messageId;
+    const response = await fetch(`${TELEGRAM_API_BASE}${botToken}/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const data = await response.json() as TelegramResponse & { result?: { message_id?: number } | boolean };
+    if (!data.ok) {
+      const unchanged = messageId && /message is not modified/i.test(data.description || "");
+      if (unchanged) return { success: true, message: "Referral daily report already current", messageId };
+      return { success: false, message: `Failed: ${data.description || "Telegram request failed"}` };
+    }
+    const returnedId = typeof data.result === "object" && data.result ? data.result.message_id : undefined;
+    return { success: true, message: "Referral daily report updated", messageId: returnedId || messageId || undefined };
+  } catch (error) {
+    return { success: false, message: `Error: ${(error as Error).message}` };
+  }
+}
 export async function sendCreditTopupNotification(
   botToken: string,
   channelId: string,

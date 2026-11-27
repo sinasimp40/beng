@@ -478,8 +478,18 @@ export const referralVisits = pgTable("referral_visits", {
   referralLinkId: varchar("referral_link_id").notNull().references(() => referralLinks.id, { onDelete: "cascade" }),
   visitedAt: text("visited_at").notNull().default(sql`now()`),
 });
+// Stores one Telegram message per Manila calendar day so referral traffic updates do not spam the channel.
+export const referralDailyReports = pgTable("referral_daily_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reportDate: text("report_date").notNull().unique(),
+  telegramMessageId: integer("telegram_message_id"),
+  lastError: text("last_error"),
+  createdAt: text("created_at").notNull().default(sql`now()`),
+  updatedAt: text("updated_at").notNull().default(sql`now()`),
+});
 export type ReferralLink = typeof referralLinks.$inferSelect;
 export type ReferralVisit = typeof referralVisits.$inferSelect;
+export type ReferralDailyReport = typeof referralDailyReports.$inferSelect;
 // Settings table for app configuration
 export const settings = pgTable("settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
