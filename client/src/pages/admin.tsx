@@ -274,7 +274,7 @@ export default function Admin() {
     <div className="min-h-screen bg-background">
       <Header searchQuery="" onSearchChange={() => {}} showSearch={false} />
 
-      <main className="container mx-auto px-4 py-6 md:px-6">
+      <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6">
         <div className="flex flex-col gap-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
